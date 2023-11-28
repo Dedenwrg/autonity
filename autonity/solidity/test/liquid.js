@@ -4,12 +4,13 @@ const ValidatorLNEW = artifacts.require("Liquid")
 const toWei = web3.utils.toWei;
 const toBN = web3.utils.toBN;
 
+const burnAddress = "0x0000000000000000000000000000000000000000";
+
 // Note, tokens are denominted in Wei in this example, but it may not
 // be possible to use such small units, depending on how the division
 // is implemented in the LiquidNewtonPullFees contract.
 
 contract("Liquid", accounts => {
-
   // Accounts.
   let rewardSource = accounts[0];
   let treasury = accounts[1];
@@ -286,6 +287,81 @@ contract("Liquid", accounts => {
     await truffleAssert.fails(lnew.transferFrom.sendTransaction(
       delegatorA, delegatorB, toWei("4001", "ether"), {from: delegatorC}));
   });
+  it("locking", async () => {
+    const liquid = await deployLNEW();
+    let totalBalance = toBN(await liquid.balanceOf(delegatorA));
+    let totalLockedBalance = toBN(await liquid.lockedBalanceOf(delegatorA));
+    let balance = toWei("10000", "ether");
+    let balanceToLock = toWei("1000", "ether");
+    let increment = toBN("100"); 
 
+    // mint
+    let tx = await liquid.mint(delegatorA, balance);
+    truffleAssert.eventEmitted(tx, 'Transfer', (ev) => {
+      return ev.from === burnAddress && ev.to === delegatorA && ev.value.toString() === balance;
+    }, "should emit Transfer event");
+    totalBalance = totalBalance.add(toBN(balance));
+    assert.equal((await liquid.balanceOf(delegatorA)).toString(), totalBalance.toString(), "unexpected balance");
+    assert.equal((await liquid.lockedBalanceOf(delegatorA)).toString(), totalLockedBalance.toString(), "unexpected locked balance");
 
+    // lock more than balance
+    await truffleAssert.fails(
+      liquid.lock(delegatorA, toWei(totalBalance.add(increment.add(toBN(balance))), "wei")),
+      truffleAssert.ErrorType.REVERT,
+      "can't lock more funds than available"
+    );
+
+    // lock less than balance
+    await liquid.lock(delegatorA, balanceToLock);
+    totalLockedBalance = totalLockedBalance.add(toBN(balanceToLock));
+    assert.equal((await liquid.lockedBalanceOf(delegatorA)).toString(), totalLockedBalance.toString(), "unexpected locked balance");
+    assert.equal((await liquid.balanceOf(delegatorA)).toString(), totalBalance.toString(), "unexpected balance");
+
+    let maxTransferable = totalBalance.sub(totalLockedBalance);
+    // transfer more than unlocked
+    await truffleAssert.fails(
+      liquid.transfer(delegatorB, toWei(maxTransferable.add(increment), "wei"), {from: delegatorA}),
+      truffleAssert.ErrorType.REVERT,
+      "insufficient unlocked funds"
+    );
+
+    // burn more than unlocked
+    await truffleAssert.fails(
+      liquid.burn(delegatorA, toWei(maxTransferable.add(increment), "wei")),
+      truffleAssert.ErrorType.REVERT,
+      "insufficient unlocked funds"
+    );
+
+    // cannot unlock more than locked
+    await truffleAssert.fails(
+      liquid.unlock(delegatorA, toWei(totalLockedBalance.add(increment), "wei")),
+      truffleAssert.ErrorType.REVERT,
+      "can't unlock more funds than locked"
+    );
+
+    // unlock
+    await liquid.unlock(delegatorA, toWei(totalLockedBalance, "wei"));
+    totalLockedBalance = totalLockedBalance.sub(totalLockedBalance);
+    assert.equal((await liquid.balanceOf(delegatorA)).toString(), totalBalance.toString(), "unexpected balance");
+    assert.equal((await liquid.lockedBalanceOf(delegatorA)).toString(), totalLockedBalance.toString(), "unexpected locked balance");
+
+    // transfer and burn whole amount
+    let transferAmount = toWei(maxTransferable.add(increment), "wei");
+    let burnAmount = toWei(totalBalance.sub(toBN(transferAmount)), "wei");
+    tx = await liquid.transfer(delegatorB, transferAmount, {from: delegatorA});
+
+    truffleAssert.eventEmitted(tx, 'Transfer', ev => {
+      return ev.from === delegatorA && ev.to === delegatorB && ev.value.toString() === transferAmount.toString();
+    }, "should emit Transfer event");
+    totalBalance = totalBalance.sub(toBN(transferAmount));
+    assert.equal((await liquid.balanceOf(delegatorA)).toString(), totalBalance.toString(), "unexpected balance");
+
+    tx = await liquid.burn(delegatorA, burnAmount);
+    truffleAssert.eventEmitted(tx, 'Transfer', (ev) => {
+      return ev.from === delegatorA, ev.to === burnAddress, ev.value.toString() === burnAmount.toString();
+    }, "should emit Transfer event");
+    totalBalance = totalBalance.sub(toBN(burnAmount));
+    assert.equal((await liquid.balanceOf(delegatorA)).toString(), totalBalance.toString(), "unexpected balance");
+
+  });
 });

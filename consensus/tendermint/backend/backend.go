@@ -1,21 +1,22 @@
 package backend
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"errors"
-	"math/big"
 	"sync"
 	"time"
+
+	"github.com/autonity/autonity/consensus/tendermint/core/interfaces"
+	"github.com/autonity/autonity/consensus/tendermint/core/message"
+
+	lru "github.com/hashicorp/golang-lru"
+	ring "github.com/zfjagann/golang-ring"
 
 	"github.com/autonity/autonity/accounts/abi"
 	"github.com/autonity/autonity/common"
 	"github.com/autonity/autonity/consensus"
 	"github.com/autonity/autonity/consensus/misc"
-	"github.com/autonity/autonity/consensus/tendermint/bft"
 	tendermintCore "github.com/autonity/autonity/consensus/tendermint/core"
-	"github.com/autonity/autonity/consensus/tendermint/core/interfaces"
-	tctypes "github.com/autonity/autonity/consensus/tendermint/core/types"
 	"github.com/autonity/autonity/consensus/tendermint/events"
 	"github.com/autonity/autonity/core"
 	"github.com/autonity/autonity/core/types"
@@ -23,9 +24,6 @@ import (
 	"github.com/autonity/autonity/crypto"
 	"github.com/autonity/autonity/event"
 	"github.com/autonity/autonity/log"
-	"github.com/autonity/autonity/node"
-	lru "github.com/hashicorp/golang-lru"
-	ring "github.com/zfjagann/golang-ring"
 )
 
 const (
@@ -33,12 +31,11 @@ const (
 	fetcherID = "tendermint"
 	// ring buffer to be able to handle at maximum 10 rounds, 20 committee and 3 messages types
 	ringCapacity = 10 * 20 * 3
+	// while asking sync for consensus messages, if we do not find any peers we try again after 10 ms
+	retryPeriod = 10
 )
 
 var (
-	// ErrUnauthorizedAddress is returned when given address cannot be found in
-	// current validator set.
-	ErrUnauthorizedAddress = errors.New("unauthorized address")
 	// ErrStoppedEngine is returned if the engine is stopped
 	ErrStoppedEngine = errors.New("stopped engine")
 )
@@ -46,12 +43,11 @@ var (
 // New creates an Ethereum Backend for BFT core engine.
 func New(privateKey *ecdsa.PrivateKey,
 	vmConfig *vm.Config,
-	services *node.TendermintServices,
+	services *interfaces.Services,
 	evMux *event.TypeMux,
 	ms *tendermintCore.MsgStore,
 	log log.Logger) *Backend {
 
-	recents, _ := lru.NewARC(inmemorySnapshots)
 	recentMessages, _ := lru.NewARC(inmemoryPeers)
 	knownMessages, _ := lru.NewARC(inmemoryMessages)
 
@@ -60,7 +56,6 @@ func New(privateKey *ecdsa.PrivateKey,
 		privateKey:     privateKey,
 		address:        crypto.PubkeyToAddress(privateKey.PublicKey),
 		logger:         log,
-		recents:        recents,
 		coreStarted:    false,
 		recentMessages: recentMessages,
 		knownMessages:  knownMessages,
@@ -70,12 +65,11 @@ func New(privateKey *ecdsa.PrivateKey,
 	}
 
 	backend.pendingMessages.SetCapacity(ringCapacity)
-	core := tendermintCore.New(backend)
+	core := tendermintCore.New(backend, services)
+
+	backend.gossiper = NewGossiper(backend.recentMessages, backend.knownMessages, backend.address, backend.logger, backend.stopped)
 	if services != nil {
-		core.SetBroadcaster(services.Broadcaster)
-		core.SetPrevoter(services.Prevoter)
-		core.SetPrecommitter(services.Precommitter)
-		core.SetProposer(services.Proposer)
+		backend.gossiper = services.Gossiper(backend)
 	}
 	backend.core = core
 	return backend
@@ -96,22 +90,20 @@ type Backend struct {
 	commitCh          chan<- *types.Block
 	proposedBlockHash common.Hash
 	coreStarted       bool
-	core              interfaces.Tendermint
+	core              interfaces.Core
 	stopped           chan struct{}
 	wg                sync.WaitGroup
 	coreMu            sync.RWMutex
 
-	// Snapshots for recent block to speed up reorgs
-	recents *lru.ARCCache
-
 	// we save the last received p2p.messages in the ring buffer
 	pendingMessages ring.Ring
 
-	// event subscription for ChainHeadEvent event
+	// interface to enqueue blocks to fetcher and find peers
 	Broadcaster consensus.Broadcaster
+	// interface to gossip consensus messages
+	gossiper interfaces.Gossiper
 
-	//TODO: ARCChace is patented by IBM, so probably need to stop using it
-	//Update: patent has expired https://patents.google.com/patent/US7167953B2/en
+	//ARCCache is patented by IBM but it has expired https://patents.google.com/patent/US7167953B2/en
 	recentMessages *lru.ARCCache // the cache of peer's messages
 	knownMessages  *lru.ARCCache // the cache of self messages
 
@@ -132,100 +124,23 @@ func (sb *Backend) Address() common.Address {
 	return sb.address
 }
 
-// Broadcast implements tendermint.Backend.SignAndBroadcast
-func (sb *Backend) Broadcast(ctx context.Context, committee types.Committee, payload []byte) error {
+// Broadcast implements tendermint.Backend.Broadcast
+func (sb *Backend) Broadcast(committee types.Committee, message message.Msg) {
 	// send to others
-	sb.Gossip(ctx, committee, payload)
+	sb.Gossip(committee, message)
 	// send to self
-	msg := events.MessageEvent{
-		Payload: payload,
-	}
-	sb.postEvent(msg)
-	return nil
-}
-
-func (sb *Backend) postEvent(event interface{}) {
-	go sb.Post(event)
+	go sb.Post(events.MessageEvent{
+		Message: message,
+	})
 }
 
 func (sb *Backend) AskSync(header *types.Header) {
-	sb.logger.Info("Consensus liveness lost, broadcasting sync request..")
-
-	targets := make(map[common.Address]struct{})
-	for _, val := range header.Committee {
-		if val.Address != sb.Address() {
-			targets[val.Address] = struct{}{}
-		}
-	}
-
-	if sb.Broadcaster != nil && len(targets) > 0 {
-		for {
-			ps := sb.Broadcaster.FindPeers(targets)
-			// If we didn't find any peers try again in 10ms or exit if we have
-			// been stopped.
-			if len(ps) == 0 {
-				t := time.NewTimer(10 * time.Millisecond)
-				select {
-				case <-t.C:
-					continue
-				case <-sb.stopped:
-					return
-				}
-			}
-			count := new(big.Int)
-			for addr, p := range ps {
-				//ask to a quorum nodes to sync, 1 must then be honest and updated
-				if count.Cmp(bft.Quorum(header.TotalVotingPower())) >= 0 {
-					break
-				}
-				sb.logger.Debug("Asking sync to", "addr", addr)
-				go p.Send(SyncMsg, []byte{}) //nolint
-
-				member := header.CommitteeMember(addr)
-				if member == nil {
-					sb.logger.Error("could not retrieve member from address")
-					continue
-				}
-				count.Add(count, member.VotingPower)
-			}
-			break
-		}
-	}
+	sb.gossiper.AskSync(header)
 }
 
-// Broadcast implements tendermint.Backend.Gossip
-func (sb *Backend) Gossip(ctx context.Context, committee types.Committee, payload []byte) {
-	hash := types.RLPHash(payload)
-	sb.knownMessages.Add(hash, true)
-
-	targets := make(map[common.Address]struct{})
-	for _, val := range committee {
-		if val.Address != sb.Address() {
-			targets[val.Address] = struct{}{}
-		}
-	}
-
-	if sb.Broadcaster != nil && len(targets) > 0 {
-		ps := sb.Broadcaster.FindPeers(targets)
-		for addr, p := range ps {
-			ms, ok := sb.recentMessages.Get(addr)
-			var m *lru.ARCCache
-			if ok {
-				m, _ = ms.(*lru.ARCCache)
-				if _, k := m.Get(hash); k {
-					// This peer had this event, skip it
-					continue
-				}
-			} else {
-				m, _ = lru.NewARC(inmemoryMessages)
-			}
-
-			m.Add(hash, true)
-			sb.recentMessages.Add(addr, m)
-
-			go p.Send(TendermintMsg, payload) //nolint
-		}
-	}
+// Gossip implements tendermint.Backend.Gossip
+func (sb *Backend) Gossip(committee types.Committee, msg message.Msg) {
+	sb.gossiper.Gossip(committee, msg)
 }
 
 // KnownMsgHash dumps the known messages in case of gossiping.
@@ -239,6 +154,10 @@ func (sb *Backend) KnownMsgHash() []common.Hash {
 
 func (sb *Backend) Logger() log.Logger {
 	return sb.logger
+}
+
+func (sb *Backend) Gossiper() interfaces.Gossiper {
+	return sb.gossiper
 }
 
 // Commit implements tendermint.Backend.Commit
@@ -294,7 +213,7 @@ func (sb *Backend) VerifyProposal(proposal *types.Block) (time.Duration, error) 
 	// verify the header of proposed proposal
 	err := sb.VerifyHeader(sb.blockchain, proposal.Header(), false)
 	// ignore errEmptyCommittedSeals error because we don't have the committed seals yet
-	if err == nil || err == types.ErrEmptyCommittedSeals {
+	if err == nil || errors.Is(err, types.ErrEmptyCommittedSeals) {
 		var (
 			receipts types.Receipts
 
@@ -310,7 +229,7 @@ func (sb *Backend) VerifyProposal(proposal *types.Block) (time.Duration, error) 
 			// Verify the header's EIP-1559 attributes.
 			return 0, err
 		}
-		// We need to process all of the transaction to get the latest state to get the latest committee
+		// We need to process all the transaction to get the latest state to get the latest committee
 		state, stateErr := sb.blockchain.StateAt(parent.Root())
 		if stateErr != nil {
 			return 0, stateErr
@@ -376,46 +295,24 @@ func (sb *Backend) VerifyProposal(proposal *types.Block) (time.Duration, error) 
 		// At this stage committee field is consistent with the validator list returned by Soma-contract
 
 		return 0, nil
-	} else if err == consensus.ErrFutureTimestampBlock {
+	} else if errors.Is(err, consensus.ErrFutureTimestampBlock) {
 		return time.Unix(int64(proposal.Header().Time), 0).Sub(now()), consensus.ErrFutureTimestampBlock
 	}
 	return 0, err
 }
 
 // Sign implements tendermint.Backend.Sign
-func (sb *Backend) Sign(data []byte) ([]byte, error) {
-	hashData := crypto.Keccak256(data)
-	return crypto.Sign(hashData, sb.privateKey)
-}
-
-// CheckSignature implements tendermint.Backend.VerifySignature
-func (sb *Backend) CheckSignature(data []byte, address common.Address, sig []byte) error {
-	signer, err := types.GetSignatureAddress(data, sig)
+func (sb *Backend) Sign(data common.Hash) ([]byte, common.Address) {
+	ret, err := crypto.Sign(data[:], sb.privateKey)
 	if err != nil {
-		sb.logger.Error("Failed to get signer address", "err", err)
-		return err
+		// We panic here, it should never happen.
+		sb.logger.Crit("Consensus signing failed")
 	}
-	// Compare derived addresses
-	if signer != address {
-		return types.ErrInvalidSignature
-	}
-	return nil
+	return ret, sb.address
 }
 
-func (sb *Backend) HeadBlock() (*types.Block, common.Address) {
-	block := sb.currentBlock()
-	var proposer common.Address
-	if block.Number().Cmp(common.Big0) > 0 {
-		var err error
-		proposer, err = sb.Author(block.Header())
-		if err != nil {
-			sb.logger.Error("Failed to get block proposer", "err", err)
-			return new(types.Block), common.Address{}
-		}
-	}
-
-	// Return header only block here since we don't need block body
-	return block, proposer
+func (sb *Backend) HeadBlock() *types.Block {
+	return sb.currentBlock()
 }
 
 func (sb *Backend) HasBadProposal(hash common.Hash) bool {
@@ -430,24 +327,22 @@ func (sb *Backend) GetContractABI() *abi.ABI {
 	return sb.blockchain.ProtocolContracts().ABI()
 }
 
-func (sb *Backend) CoreState() tctypes.TendermintState {
+func (sb *Backend) CoreState() interfaces.CoreState {
 	return sb.core.CoreState()
 }
 
-// Whitelist for the current block
+// CommitteeEnodes retrieve the list of validators enodes for the current block
 func (sb *Backend) CommitteeEnodes() []string {
 	db, err := sb.blockchain.State()
 	if err != nil {
 		sb.logger.Error("Failed to get state", "err", err)
 		return nil
 	}
-
 	enodes, err := sb.blockchain.ProtocolContracts().CommitteeEnodes(sb.blockchain.CurrentBlock(), db)
 	if err != nil {
 		sb.logger.Error("Failed to get block committee", "err", err)
 		return nil
 	}
-
 	return enodes.StrList
 }
 
@@ -456,8 +351,7 @@ func (sb *Backend) SyncPeer(address common.Address) {
 	if sb.Broadcaster == nil {
 		return
 	}
-
-	sb.logger.Info("Syncing", "peer", address)
+	sb.logger.Debug("Syncing", "peer", address)
 	targets := map[common.Address]struct{}{address: {}}
 	ps := sb.Broadcaster.FindPeers(targets)
 	p, connected := ps[address]
@@ -467,7 +361,7 @@ func (sb *Backend) SyncPeer(address common.Address) {
 	messages := sb.core.CurrentHeightMessages()
 	for _, msg := range messages {
 		//We do not save sync messages in the arc cache as recipient could not have been able to process some previous sent.
-		go p.Send(TendermintMsg, msg.GetBytes()) //nolint
+		go p.SendRaw(NetworkCodes[msg.Code()], msg.Payload()) //nolint
 	}
 }
 
@@ -480,8 +374,6 @@ func (sb *Backend) ResetPeerCache(address common.Address) {
 	}
 }
 
-func (sb *Backend) RemoveMessageFromLocalCache(payload []byte) {
-	// Note: ARC is thread-safe
-	hash := types.RLPHash(payload)
-	sb.knownMessages.Remove(hash)
+func (sb *Backend) RemoveMessageFromLocalCache(message message.Msg) {
+	sb.knownMessages.Remove(message.Hash())
 }

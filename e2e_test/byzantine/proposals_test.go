@@ -2,23 +2,23 @@ package byzantine
 
 import (
 	"context"
-	"github.com/autonity/autonity/common"
-	"github.com/autonity/autonity/consensus"
-	"github.com/autonity/autonity/consensus/tendermint/core"
-	"github.com/autonity/autonity/consensus/tendermint/core/constants"
-	"github.com/autonity/autonity/consensus/tendermint/core/interfaces"
-	"github.com/autonity/autonity/consensus/tendermint/core/message"
-	tctypes "github.com/autonity/autonity/consensus/tendermint/core/types"
-	"github.com/autonity/autonity/core/types"
-	"github.com/autonity/autonity/e2e_test"
-	"github.com/autonity/autonity/node"
-	"github.com/autonity/autonity/rlp"
-	fuzz "github.com/google/gofuzz"
-	"github.com/stretchr/testify/require"
 	"math/big"
 	"sync/atomic"
 	"testing"
+
+	"github.com/autonity/autonity/common"
+	"github.com/autonity/autonity/consensus/tendermint/core"
+	"github.com/autonity/autonity/consensus/tendermint/core/interfaces"
+	"github.com/autonity/autonity/consensus/tendermint/core/message"
+	"github.com/autonity/autonity/core/types"
+	"github.com/autonity/autonity/e2e_test"
+	fuzz "github.com/google/gofuzz"
+	"github.com/stretchr/testify/require"
 )
+
+func newDuplicateProposalSender(c interfaces.Core) interfaces.Proposer {
+	return &duplicateProposalSender{c.(*core.Core), c.Proposer()}
+}
 
 type duplicateProposalSender struct {
 	*core.Core
@@ -26,30 +26,16 @@ type duplicateProposalSender struct {
 }
 
 // SendProposal overrides core.sendProposal and send multiple proposals
-func (c *duplicateProposalSender) SendProposal(ctx context.Context, p *types.Block) {
-
-	proposalBlock := message.NewProposal(c.Round(), c.Height(), c.ValidRound(), p, c.Backend().Sign)
-	proposalBlock2 := message.NewProposal(c.Round(), c.Height(), c.ValidRound()-1, p, c.Backend().Sign)
-	proposal, _ := rlp.EncodeToBytes(proposalBlock)
-	proposal2, _ := rlp.EncodeToBytes(proposalBlock2)
+func (c *duplicateProposalSender) SendProposal(_ context.Context, p *types.Block) {
+	proposal := message.NewPropose(c.Round(), c.Height().Uint64(), c.ValidRound(), p, c.Backend().Sign)
+	proposal2 := message.NewPropose(c.Round(), c.Height().Uint64(), c.ValidRound()-1, p, c.Backend().Sign)
 
 	c.SetSentProposal(true)
 	c.Backend().SetProposedBlockHash(p.Hash())
-
 	//send same proposal twice
-	c.Br().SignAndBroadcast(ctx, &message.Message{
-		Code:          consensus.MsgProposal,
-		Payload:       proposal,
-		Address:       c.Address(),
-		CommittedSeal: []byte{},
-	})
+	c.BroadcastAll(proposal)
 	// send 2nd proposal with different validround
-	c.Br().SignAndBroadcast(ctx, &message.Message{
-		Code:          consensus.MsgProposal,
-		Payload:       proposal2,
-		Address:       c.Address(),
-		CommittedSeal: []byte{},
-	})
+	c.BroadcastAll(proposal2)
 }
 
 // TestDuplicateProposal broadcasts two proposals with same round and same height but different validround
@@ -58,7 +44,7 @@ func TestDuplicateProposal(t *testing.T) {
 	require.NoError(t, err)
 
 	//set Malicious proposalSender
-	users[0].TendermintServices = &node.TendermintServices{Proposer: &duplicateProposalSender{}}
+	users[0].TendermintServices = &interfaces.Services{Proposer: newDuplicateProposalSender}
 	// creates a network of 6 users and starts all the nodes in it
 	network, err := e2e.NewNetworkFromValidators(t, users, true)
 	require.NoError(t, err)
@@ -68,23 +54,21 @@ func TestDuplicateProposal(t *testing.T) {
 	require.NoError(t, err)
 
 	// network should be up and continue to mine blocks
-	err = network.WaitToMineNBlocks(10, 120)
+	err = network.WaitToMineNBlocks(10, 120, false)
 	require.NoError(t, err, "Network should be mining new blocks now, but it's not")
+}
+
+func newMalProposalSender(c interfaces.Core) interfaces.Broadcaster {
+	return &malProposalSender{c.(*core.Core)}
 }
 
 type malProposalSender struct {
 	*core.Core
 }
 
-// SendProposalFromNonProposer broadcasts a new proposal, only if it is a non-proposer
-func SendProposalFromNonProposer(ctx context.Context, c *core.Core, fm []byte) {
-	m, err := message.FromBytes(fm)
-	if err != nil {
-		c.Logger().Error("can not send proposal, invalid payload", "err", err)
-	}
-	round := m.R()
-	height := m.H()
-
+func (c *malProposalSender) Broadcast(msg message.Msg) {
+	round := msg.R()
+	height := msg.H()
 	// if we are the proposer for this round, return
 	if c.CommitteeSet().GetProposer(round).Address == c.Backend().Address() {
 		return
@@ -92,29 +76,12 @@ func SendProposalFromNonProposer(ctx context.Context, c *core.Core, fm []byte) {
 	header := &types.Header{Number: new(big.Int).SetUint64(height)}
 	block := types.NewBlockWithHeader(header)
 	// create a new proposal message
-	msgP := e2e.NewProposeMsg(c.Backend().Address(), block, height, round, -1, c.Backend().Sign)
-	fm, err = c.SignMessage(msgP)
-	if err != nil {
-		return
-	}
-
-	if err := c.Backend().Broadcast(ctx, c.CommitteeSet().Committee(), fm); err != nil {
-		c.Logger().Error("consensus message broadcast failure, err:", err)
-	}
+	propose := message.NewPropose(round, height, -1, block, c.Backend().Sign)
+	c.BroadcastAll(propose)
 }
 
-// DefaultSignAndBroadcast overrides the code.DefaultSignAndBroadcast
-func (c *malProposalSender) SignAndBroadcast(ctx context.Context, msg *message.Message) {
-	logger := c.Logger().New("step", c.Step())
-
-	fm, err := c.SignMessage(msg)
-	if err != nil {
-		return
-	}
-	SendProposalFromNonProposer(ctx, c.Core, fm)
-	if err := c.Backend().Broadcast(ctx, c.CommitteeSet().Committee(), fm); err != nil {
-		logger.Error("consensus message broadcast failure, err:", err)
-	}
+func newProposalApprover(c interfaces.Core) interfaces.Proposer {
+	return &proposalApprover{c.(*core.Core), c.Proposer()}
 }
 
 type proposalApprover struct {
@@ -122,17 +89,11 @@ type proposalApprover struct {
 	interfaces.Proposer
 }
 
-func (c *proposalApprover) HandleProposal(ctx context.Context, msg *message.Message) error {
-	var proposal message.Proposal
-	err := msg.Decode(&proposal)
-	if err != nil {
-		return constants.ErrFailedDecodeProposal
-	}
+func (c *proposalApprover) HandleProposal(ctx context.Context, proposal *message.Propose) error {
 	// Set the proposal for the current round
-	c.CurRoundMessages().SetProposal(&proposal, msg, true)
-
-	c.GetPrevoter().SendPrevote(ctx, false)
-	c.SetStep(tctypes.Prevote)
+	c.CurRoundMessages().SetProposal(proposal, true)
+	c.Prevoter().SendPrevote(ctx, false)
+	c.SetStep(core.Prevote)
 	return nil
 }
 
@@ -142,9 +103,9 @@ func TestNonProposerWithFaultyApprover(t *testing.T) {
 	require.NoError(t, err)
 
 	//set Malicious proposalSender
-	users[0].TendermintServices = &node.TendermintServices{Broadcaster: &malProposalSender{}}
-	users[1].TendermintServices = &node.TendermintServices{Broadcaster: &malProposalSender{}, Proposer: &proposalApprover{}}
-	users[2].TendermintServices = &node.TendermintServices{Broadcaster: &malProposalSender{}}
+	users[0].TendermintServices = &interfaces.Services{Broadcaster: newMalProposalSender}
+	users[1].TendermintServices = &interfaces.Services{Broadcaster: newMalProposalSender, Proposer: newProposalApprover}
+	users[2].TendermintServices = &interfaces.Services{Broadcaster: newMalProposalSender}
 	// creates a network of 6 users and starts all the nodes in it
 	network, err := e2e.NewNetworkFromValidators(t, users, true)
 	require.NoError(t, err)
@@ -154,7 +115,7 @@ func TestNonProposerWithFaultyApprover(t *testing.T) {
 	require.NoError(t, err)
 
 	// network should be up and continue to mine blocks
-	err = network.WaitToMineNBlocks(10, 120)
+	err = network.WaitToMineNBlocks(10, 120, false)
 	require.NoError(t, err, "Network should be mining new blocks now, but it's not")
 }
 
@@ -163,8 +124,8 @@ func TestDuplicateProposalWithFaultyApprover(t *testing.T) {
 	require.NoError(t, err)
 
 	//set Malicious proposalSender
-	users[0].TendermintServices = &node.TendermintServices{Proposer: &duplicateProposalSender{}}
-	users[1].TendermintServices = &node.TendermintServices{Proposer: &proposalApprover{}}
+	users[0].TendermintServices = &interfaces.Services{Proposer: newDuplicateProposalSender}
+	users[1].TendermintServices = &interfaces.Services{Proposer: newProposalApprover}
 	// creates a network of 6 users and starts all the nodes in it
 	network, err := e2e.NewNetworkFromValidators(t, users, true)
 	require.NoError(t, err)
@@ -174,8 +135,12 @@ func TestDuplicateProposalWithFaultyApprover(t *testing.T) {
 	require.NoError(t, err)
 
 	// network should be up and continue to mine blocks
-	err = network.WaitToMineNBlocks(10, 120)
+	err = network.WaitToMineNBlocks(10, 120, false)
 	require.NoError(t, err, "Network should be mining new blocks now, but it's not")
+}
+
+func newPartialProposalSender(c interfaces.Core) interfaces.Proposer {
+	return &partialProposalSender{c.(*core.Core), c.Proposer()}
 }
 
 type partialProposalSender struct {
@@ -184,41 +149,31 @@ type partialProposalSender struct {
 }
 
 // SendProposal overrides core.sendProposal and send multiple proposals
-func (c *partialProposalSender) SendProposal(ctx context.Context, p *types.Block) {
-
+func (c *partialProposalSender) SendProposal(_ context.Context, p *types.Block) {
 	fakeTransactions := make([]*types.Transaction, 0)
 	for i := 0; i < 5; i++ {
-
 		var fakeTransaction types.Transaction
 		f := fuzz.New()
 		f.Fuzz(&fakeTransaction)
 		var tx types.LegacyTx
 		f.Fuzz(&tx)
 		fakeTransaction.SetInner(&tx)
-
 		fakeTransactions = append(fakeTransactions, &fakeTransaction)
 	}
 	p.SetTransactions(fakeTransactions)
-	proposalBlock := message.NewProposal(c.Round(), c.Height(), c.ValidRound(), p, c.Backend().Sign)
-	proposal, _ := rlp.EncodeToBytes(proposalBlock)
-
+	proposal := message.NewPropose(c.Round(), c.Height().Uint64(), c.ValidRound(), p, c.Backend().Sign)
 	c.SetSentProposal(true)
 	c.Backend().SetProposedBlockHash(p.Hash())
-
 	//send same proposal twice
-	c.Br().SignAndBroadcast(ctx, &message.Message{
-		Code:          consensus.MsgProposal,
-		Payload:       proposal,
-		Address:       c.Address(),
-		CommittedSeal: []byte{},
-	})
+	c.BroadcastAll(proposal)
 }
+
 func TestPartialProposal(t *testing.T) {
 	users, err := e2e.Validators(t, 6, "10e18,v,100,0.0.0.0:%s,%s")
 	require.NoError(t, err)
 
 	//set Malicious proposalSender
-	users[0].TendermintServices = &node.TendermintServices{Proposer: &partialProposalSender{}}
+	users[0].TendermintServices = &interfaces.Services{Proposer: newPartialProposalSender}
 	// creates a network of 6 users and starts all the nodes in it
 	network, err := e2e.NewNetworkFromValidators(t, users, true)
 	require.NoError(t, err)
@@ -228,8 +183,12 @@ func TestPartialProposal(t *testing.T) {
 	require.NoError(t, err)
 
 	// network should be up and continue to mine blocks
-	err = network.WaitToMineNBlocks(10, 120)
+	err = network.WaitToMineNBlocks(10, 120, false)
 	require.NoError(t, err, "Network should be mining new blocks now, but it's not")
+}
+
+func newInvalidBlockProposer(c interfaces.Core) interfaces.Proposer {
+	return &invalidBlockProposer{c.(*core.Core), c.Proposer()}
 }
 
 type invalidBlockProposer struct {
@@ -238,8 +197,7 @@ type invalidBlockProposer struct {
 }
 
 // SendProposal overrides core.sendProposal and send multiple proposals
-func (c *invalidBlockProposer) SendProposal(ctx context.Context, p *types.Block) {
-
+func (c *invalidBlockProposer) SendProposal(_ context.Context, p *types.Block) {
 	fakeTransactions := make([]*types.Transaction, 0)
 	f := fuzz.New()
 	for i := 0; i < 5; i++ {
@@ -263,24 +221,13 @@ func (c *invalidBlockProposer) SendProposal(ctx context.Context, p *types.Block)
 	var num big.Int
 	f.Fuzz(&num)
 	p.SetHeaderNumber(&num)
-	proposalBlock := message.NewProposal(c.Round(), c.Height(), c.ValidRound(), p, c.Backend().Sign)
-	proposal, _ := rlp.EncodeToBytes(proposalBlock)
+	proposal := message.NewPropose(c.Round(), c.Height().Uint64(), c.ValidRound(), p, c.Backend().Sign)
 
 	c.SetSentProposal(true)
 	c.Backend().SetProposedBlockHash(p.Hash())
-	var nilAddr common.Address
-	fuzz.New().Fuzz(&nilAddr)
-	ranBytes, _ := e2e.GenerateRandomBytes(10000000)
 
-	// junk Address
-	junkAddr := common.BytesToAddress(ranBytes)
 	//send same proposal twice
-	c.Br().SignAndBroadcast(ctx, &message.Message{
-		Code:          consensus.MsgProposal,
-		Payload:       proposal,
-		Address:       junkAddr,
-		CommittedSeal: []byte{},
-	})
+	c.BroadcastAll(proposal)
 }
 
 func TestInvalidBlockProposal(t *testing.T) {
@@ -289,7 +236,7 @@ func TestInvalidBlockProposal(t *testing.T) {
 	require.NoError(t, err)
 
 	//set Malicious proposalSender
-	users[0].TendermintServices = &node.TendermintServices{Proposer: &invalidBlockProposer{}}
+	users[0].TendermintServices = &interfaces.Services{Proposer: newInvalidBlockProposer}
 	// creates a network of 6 users and starts all the nodes in it
 	network, err := e2e.NewNetworkFromValidators(t, users, true)
 	require.NoError(t, err)
@@ -298,7 +245,7 @@ func TestInvalidBlockProposal(t *testing.T) {
 	require.NoError(t, err)
 
 	// network should be up and continue to mine blocks
-	err = network.WaitToMineNBlocks(5, 60)
+	err = network.WaitToMineNBlocks(5, 60, false)
 	require.NoError(t, err, "Network should be mining new blocks now, but it's not")
 	network.Shutdown()
 	//}
