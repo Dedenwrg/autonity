@@ -53,6 +53,62 @@ func BenchmarkComputeCommittee(b *testing.B) {
 	b.Log(1.0 * gasUsed / uint64(b.N))
 }
 
+func BenchmarkComputeCommitteeModified(b *testing.B) {
+	// Deploy contract
+	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
+	require.NoError(b, err)
+
+	validatorCount := 10
+	validators, _, err := randomValidators(validatorCount, 10)
+	require.NoError(b, err)
+	contractAbi := &generated.AutonityTestAbi
+	deployer := common.Address{}
+	contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm)
+	require.NoError(b, err)
+	// b.Log(contractAddress)
+	var header *types.Header
+	packedArgs, err := contractAbi.Pack("applyStakingOperations")
+	require.NoError(b, err)
+	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations", packedArgs)
+	require.NoError(b, err)
+	packedArgs, err = contractAbi.Pack("computeCommitteeModified")
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "computeCommitteeModified", packedArgs)
+		require.NoError(b, err)
+	}
+}
+
+func BenchmarkComputeCommitteeWithCommitteeStruct(b *testing.B) {
+	// Deploy contract
+	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
+	require.NoError(b, err)
+
+	validatorCount := 10
+	validators, _, err := randomValidators(validatorCount, 10)
+	require.NoError(b, err)
+	contractAbi := &generated.AutonityTestAbi
+	deployer := common.Address{}
+	contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm)
+	require.NoError(b, err)
+	// b.Log(contractAddress)
+	var header *types.Header
+	packedArgs, err := contractAbi.Pack("applyStakingOperations")
+	require.NoError(b, err)
+	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations", packedArgs)
+	require.NoError(b, err)
+	packedArgs, err = contractAbi.Pack("computeCommitteeWithCommitteeStruct")
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "computeCommitteeWithCommitteeStruct", packedArgs)
+		require.NoError(b, err)
+	}
+}
+
 func TestElectProposer(t *testing.T) {
 	height := uint64(9999)
 	samePowers := []int{100, 100, 100, 100}
