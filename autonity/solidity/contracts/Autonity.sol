@@ -51,6 +51,13 @@ contract Autonity is IAutonity, IERC20, Upgradeable {
         uint256 votingPower;
     }
 
+    struct StructForSorting {
+        address nodeAddress;
+        address oracleAddress;
+        string enode;
+        uint256 bondedStake;
+    }
+
     /**************************************************/
     // Todo: Create a FIFO structure library, integrate with Staking{}
     /* Used for epoched staking */
@@ -678,6 +685,138 @@ contract Autonity is IAutonity, IERC20, Upgradeable {
         return _voterList;
     }
 
+    function computeCommitteeModified() public onlyProtocol returns (address[] memory){
+        // Left public for testing purposes.
+        require(validatorList.length > 0, "There must be validators");
+        /*
+         As opposed to storage arrays, it is not possible to resize memory arrays
+         have to calculate the required size in advance
+        */
+        uint _len = 0;
+        for (uint256 i = 0; i < validatorList.length; i++) {
+            if (validators[validatorList[i]].state == ValidatorState.active &&
+                validators[validatorList[i]].bondedStake > 0) {
+                _len++;
+            }
+        }
+
+        uint256 _committeeLength = config.protocol.committeeSize;
+        if (_committeeLength >= _len) {_committeeLength = _len;}
+
+        StructForSorting[] memory _validatorList = new StructForSorting[](_len);
+        StructForSorting[] memory _committeeList = new StructForSorting[](_committeeLength);
+        address [] memory _voterList = new address[](_committeeLength);
+
+        // since Push function does not apply to fix length array, introduce a index j to prevent the overflow,
+        // not all the members in validator pool satisfy the enabled && bondedStake > 0, so the overflow happens.
+        uint j = 0;
+        for (uint256 i = 0; i < validatorList.length; i++) {
+            if (validators[validatorList[i]].state == ValidatorState.active &&
+                validators[validatorList[i]].bondedStake > 0) {
+                // Perform a copy of the validator object
+                Validator storage _user = validators[validatorList[i]];
+                StructForSorting memory _item = StructForSorting(
+                    _user.nodeAddress, _user.oracleAddress, _user.enode, _user.bondedStake
+                );
+                _validatorList[j] = _item;
+                j++;
+            }
+        }
+
+        // If there are more validators than seats in the committee
+        if (_validatorList.length > config.protocol.committeeSize) {
+            // sort validators by stake in ascending order
+            _sortByStakeModified(_validatorList);
+            // choose the top-N (with N=maxCommitteeSize)
+            // Todo: (optimisation) just pop()
+            for (uint256 _j = 0; _j < config.protocol.committeeSize; _j++) {
+                _committeeList[_j] = _validatorList[_j];
+            }
+        }
+        // If all the validators fit in the committee
+        else {
+            _committeeList = _validatorList;
+        }
+
+        // Update committee in persistent storage
+        delete committee;
+        delete committeeNodes;
+        epochTotalBondedStake = 0;
+        for (uint256 _k = 0; _k < _committeeLength; _k++) {
+            CommitteeMember memory _member = CommitteeMember(_committeeList[_k].nodeAddress, _committeeList[_k].bondedStake);
+            committee.push(_member);
+            committeeNodes.push(_committeeList[_k].enode);
+            _voterList[_k] = _committeeList[_k].oracleAddress;
+            epochTotalBondedStake += _committeeList[_k].bondedStake;
+        }
+        return _voterList;
+    }
+
+    function computeCommitteeWithCommitteeStruct() public onlyProtocol returns (address[] memory){
+        // Left public for testing purposes.
+        require(validatorList.length > 0, "There must be validators");
+        /*
+         As opposed to storage arrays, it is not possible to resize memory arrays
+         have to calculate the required size in advance
+        */
+        uint _len = 0;
+        for (uint256 i = 0; i < validatorList.length; i++) {
+            if (validators[validatorList[i]].state == ValidatorState.active &&
+                validators[validatorList[i]].bondedStake > 0) {
+                _len++;
+            }
+        }
+
+        uint256 _committeeLength = config.protocol.committeeSize;
+        if (_committeeLength >= _len) {_committeeLength = _len;}
+
+        CommitteeMember[] memory _validatorList = new CommitteeMember[](_len);
+        CommitteeMember[] memory _committeeList = new CommitteeMember[](_committeeLength);
+        address [] memory _voterList = new address[](_committeeLength);
+
+        // since Push function does not apply to fix length array, introduce a index j to prevent the overflow,
+        // not all the members in validator pool satisfy the enabled && bondedStake > 0, so the overflow happens.
+        uint j = 0;
+        for (uint256 i = 0; i < validatorList.length; i++) {
+            if (validators[validatorList[i]].state == ValidatorState.active &&
+                validators[validatorList[i]].bondedStake > 0) {
+                // Perform a copy of the validator object
+                Validator storage _user = validators[validatorList[i]];
+                CommitteeMember memory _item = CommitteeMember(_user.nodeAddress, _user.bondedStake);
+                _validatorList[j] = _item;
+                j++;
+            }
+        }
+
+        // If there are more validators than seats in the committee
+        if (_validatorList.length > config.protocol.committeeSize) {
+            // sort validators by stake in ascending order
+            _sortByStakeWithCommittee(_validatorList);
+            // choose the top-N (with N=maxCommitteeSize)
+            // Todo: (optimisation) just pop()
+            for (uint256 _j = 0; _j < config.protocol.committeeSize; _j++) {
+                _committeeList[_j] = _validatorList[_j];
+            }
+        }
+        // If all the validators fit in the committee
+        else {
+            _committeeList = _validatorList;
+        }
+
+        // Update committee in persistent storage
+        delete committee;
+        delete committeeNodes;
+        epochTotalBondedStake = 0;
+        for (uint256 _k = 0; _k < _committeeLength; _k++) {
+            Validator storage _member = validators[_committeeList[_k].addr];
+            committee.push(_committeeList[_k]);
+            committeeNodes.push(_member.enode);
+            _voterList[_k] = _member.oracleAddress;
+            epochTotalBondedStake += _committeeList[_k].votingPower;
+        }
+        return _voterList;
+    }
+
 
     /*
     ============================================================
@@ -1219,6 +1358,14 @@ contract Autonity is IAutonity, IERC20, Upgradeable {
         _structQuickSort(_validators, int(0), int(_validators.length - 1));
     }
 
+    function _sortByStakeModified(StructForSorting[] memory _validators) internal pure {
+        _structQuickSortModified(_validators, int(0), int(_validators.length - 1));
+    }
+
+    function _sortByStakeWithCommittee(CommitteeMember[] memory _validators) internal pure {
+        _structQuickSortWithCommittee(_validators, int(0), int(_validators.length - 1));
+    }
+
     /**
     * @dev QuickSort algorithm sorting in ascending order by stake.
     */
@@ -1245,6 +1392,58 @@ contract Autonity is IAutonity, IERC20, Upgradeable {
         // Recursion call in the right partition
         if (_i < _high) {
             _structQuickSort(_users, _i, _high);
+        }
+    }
+
+    function _structQuickSortModified(StructForSorting[] memory _users, int _low, int _high) internal pure {
+
+        int _i = _low;
+        int _j = _high;
+        if (_i == _j) return;
+        uint _pivot = _users[uint(_low + (_high - _low) / 2)].bondedStake;
+        // Set the pivot element in its right sorted index in the array
+        while (_i <= _j) {
+            while (_users[uint(_i)].bondedStake > _pivot) _i++;
+            while (_pivot > _users[uint(_j)].bondedStake) _j--;
+            if (_i <= _j) {
+                (_users[uint(_i)], _users[uint(_j)]) = (_users[uint(_j)], _users[uint(_i)]);
+                _i++;
+                _j--;
+            }
+        }
+        // Recursion call in the left partition of the array
+        if (_low < _j) {
+            _structQuickSortModified(_users, _low, _j);
+        }
+        // Recursion call in the right partition
+        if (_i < _high) {
+            _structQuickSortModified(_users, _i, _high);
+        }
+    }
+
+    function _structQuickSortWithCommittee(CommitteeMember[] memory _users, int _low, int _high) internal pure {
+
+        int _i = _low;
+        int _j = _high;
+        if (_i == _j) return;
+        uint _pivot = _users[uint(_low + (_high - _low) / 2)].votingPower;
+        // Set the pivot element in its right sorted index in the array
+        while (_i <= _j) {
+            while (_users[uint(_i)].votingPower > _pivot) _i++;
+            while (_pivot > _users[uint(_j)].votingPower) _j--;
+            if (_i <= _j) {
+                (_users[uint(_i)], _users[uint(_j)]) = (_users[uint(_j)], _users[uint(_i)]);
+                _i++;
+                _j--;
+            }
+        }
+        // Recursion call in the left partition of the array
+        if (_low < _j) {
+            _structQuickSortWithCommittee(_users, _low, _j);
+        }
+        // Recursion call in the right partition
+        if (_i < _high) {
+            _structQuickSortWithCommittee(_users, _i, _high);
         }
     }
 
