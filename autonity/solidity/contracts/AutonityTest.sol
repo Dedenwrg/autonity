@@ -25,6 +25,68 @@ contract AutonityTest is Autonity {
        _stakingOperations();
    }
 
+   function testStructQuickSort() public view {
+       Validator[] memory _validatorList = new Validator[](validatorList.length);
+       for (uint256 i = 0; i < validatorList.length; i++) {
+            Validator memory _user = validators[validatorList[i]];
+            _validatorList[i] = _user;
+        }
+        _structQuickSort(_validatorList, 0, int(validatorList.length - 1));
+   }
+
+   function testStructQuickSortOptimized() public view {
+       Validator[] memory _validatorList = new Validator[](validatorList.length);
+       for (uint256 i = 0; i < validatorList.length; i++) {
+            Validator memory _user = validators[validatorList[i]];
+            _validatorList[i] = _user;
+        }
+        _structQuickSortOptimized(_validatorList, 0, int(validatorList.length - 1));
+   }
+
+   function testStructQuickSortModified() public view {
+       StructForSorting[] memory _validatorList = new StructForSorting[](validatorList.length);
+       for (uint256 i = 0; i < validatorList.length; i++) {
+             Validator storage _user = validators[validatorList[i]];
+             StructForSorting memory _item = StructForSorting(
+                 _user.nodeAddress, _user.oracleAddress, _user.enode, _user.bondedStake
+             );
+            _validatorList[i] = _item;
+        }
+        _structQuickSortModified(_validatorList, 0, int(validatorList.length - 1));
+   }
+
+   function testStructQuickSortModifiedOptimized() public view {
+       StructForSorting[] memory _validatorList = new StructForSorting[](validatorList.length);
+       for (uint256 i = 0; i < validatorList.length; i++) {
+             Validator storage _user = validators[validatorList[i]];
+             StructForSorting memory _item = StructForSorting(
+                 _user.nodeAddress, _user.oracleAddress, _user.enode, _user.bondedStake
+             );
+            _validatorList[i] = _item;
+        }
+        _structQuickSortModifiedOptimized(_validatorList, 0, int(validatorList.length - 1));
+   }
+
+   function testStructQuickSortWithCommittee() public view {
+       CommitteeMember[] memory _validatorList = new CommitteeMember[](validatorList.length);
+       for (uint256 i = 0; i < validatorList.length; i++) {
+            Validator storage _user = validators[validatorList[i]];
+            CommitteeMember memory _item = CommitteeMember(_user.nodeAddress, _user.bondedStake);
+            _validatorList[i] = _item;
+        }
+        _structQuickSortWithCommittee(_validatorList, 0, int(validatorList.length - 1));
+   }
+
+   function testStructQuickSortWithCommitteeOptimized() public view {
+       CommitteeMember[] memory _validatorList = new CommitteeMember[](validatorList.length);
+       for (uint256 i = 0; i < validatorList.length; i++) {
+            Validator storage _user = validators[validatorList[i]];
+            CommitteeMember memory _item = CommitteeMember(_user.nodeAddress, _user.bondedStake);
+            _validatorList[i] = _item;
+        }
+        _structQuickSortWithCommitteeOptimized(_validatorList, 0, int(validatorList.length - 1));
+   }
+
    function getBondingRequest(uint256 _id) public view returns (BondingRequest memory) {
         return bondingMap[_id];
    }
