@@ -28,8 +28,248 @@ func BenchmarkComputeCommittee(b *testing.B) {
 	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
 	require.NoError(b, err)
 
-	validatorCount := 100000
+	validatorCount := 10000
 	validators, _, err := randomValidators(validatorCount, 30)
+	require.NoError(b, err)
+	contractAbi := &generated.AutonityTestAbi
+	deployer := common.Address{}
+	committeeSize := 100
+
+	b.Run("computeCommitteeMemorySave", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("computeCommitteeMemorySave")
+		require.NoError(b, err)
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("computeCommittee", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("computeCommittee")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("computeCommitteeWithCommitteeStructMemorySave", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("computeCommitteeWithCommitteeStructMemorySave")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("computeCommitteeWithCommitteeStruct", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("computeCommitteeWithCommitteeStruct")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("computeCommitteeModifiedMemorySave", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("computeCommitteeModifiedMemorySave")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("computeCommitteeModified", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("computeCommitteeModified")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+}
+
+func BenchmarkIteration(b *testing.B) {
+	// Deploy contract
+	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
+	require.NoError(b, err)
+
+	validatorCount := 100000
+	validators, _, err := randomValidators(validatorCount, 10)
+	require.NoError(b, err)
+	contractAbi := &generated.AutonityTestAbi
+	deployer := common.Address{}
+	committeeSize := 1000
+
+	b.Run("iterateValidatorList", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		packedArgs, err := contractAbi.Pack("iterateValidatorList")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("iterateValidators", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("iterateValidators")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("iterateValidatorsAndCreatePointer", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("iterateValidatorsAndCreatePointer")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("iterateValidatorsAndCreateMemory", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("iterateValidatorsAndCreateMemory")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("iterateValidatorsAndCreateMemoryArray", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("iterateValidatorsAndCreateMemoryArray")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+}
+
+func BenchmarkSorting(b *testing.B) {
+	// Deploy contract
+	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
+	require.NoError(b, err)
+
+	validatorCount := 10000
+	validators, _, err := randomValidators(validatorCount, 30)
+	require.NoError(b, err)
+	contractAbi := &generated.AutonityTestAbi
+	deployer := common.Address{}
+	committeeSize := 1000
+
+	b.Run("testStructQuickSort", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		// err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		// require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("testStructQuickSort")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("testStructQuickSortOptimized", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		// err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		// require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("testStructQuickSortOptimized")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("testStructQuickSortModified", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		// err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		// require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("testStructQuickSortModified")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("testStructQuickSortModifiedOptimized", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		// err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		// require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("testStructQuickSortModifiedOptimized")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("testStructQuickSortWithCommittee", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		// err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		// require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("testStructQuickSortWithCommittee")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+
+	b.Run("testStructQuickSortWithCommitteeOptimized", func(b *testing.B) {
+		contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
+		require.NoError(b, err)
+		var header *types.Header
+		// err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
+		// require.NoError(b, err)
+		packedArgs, err := contractAbi.Pack("testStructQuickSortWithCommitteeOptimized")
+		require.NoError(b, err)
+
+		benchmarkWithGas(b, evmContract, stateDb, header, contractAddress, packedArgs)
+	})
+}
+
+func TestDeleteValidator(b *testing.T) {
+	// Deploy contract
+	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
+	require.NoError(b, err)
+
+	validatorCount := 10
+	validators, _, err := randomValidators(validatorCount, 10)
 	require.NoError(b, err)
 	contractAbi := &generated.AutonityTestAbi
 	deployer := common.Address{}
@@ -39,21 +279,11 @@ func BenchmarkComputeCommittee(b *testing.B) {
 	var header *types.Header
 	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
 	require.NoError(b, err)
-	packedArgs, err := contractAbi.Pack("computeCommittee")
+	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "deleteValidator", validators[0].NodeAddress)
 	require.NoError(b, err)
-	gas := uint64(math.MaxUint64)
-	var gasUsed uint64
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, gasLeft, err := evmContract.CallContractFunc(stateDb, header, contractAddress, packedArgs)
-		require.NoError(b, err)
-		gasUsed += gas - gasLeft
-	}
-	b.Log(1.0 * gasUsed / uint64(b.N))
 }
 
-func BenchmarkComputeCommitteeModified(b *testing.B) {
+func TestArrayModification(b *testing.T) {
 	// Deploy contract
 	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
 	require.NoError(b, err)
@@ -63,25 +293,17 @@ func BenchmarkComputeCommitteeModified(b *testing.B) {
 	require.NoError(b, err)
 	contractAbi := &generated.AutonityTestAbi
 	deployer := common.Address{}
-	contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm)
+	committeeSize := 100
+	contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
 	require.NoError(b, err)
-	// b.Log(contractAddress)
 	var header *types.Header
-	packedArgs, err := contractAbi.Pack("applyStakingOperations")
+	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
 	require.NoError(b, err)
-	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations", packedArgs)
+	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "testArrayModification", validators[0].NodeAddress)
 	require.NoError(b, err)
-	packedArgs, err = contractAbi.Pack("computeCommitteeModified")
-	require.NoError(b, err)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "computeCommitteeModified", packedArgs)
-		require.NoError(b, err)
-	}
 }
 
-func BenchmarkComputeCommitteeWithCommitteeStruct(b *testing.B) {
+func TestArrayDelete(b *testing.T) {
 	// Deploy contract
 	stateDb, evm, evmContract, err := initalizeEvm(&generated.AutonityTestAbi)
 	require.NoError(b, err)
@@ -91,22 +313,14 @@ func BenchmarkComputeCommitteeWithCommitteeStruct(b *testing.B) {
 	require.NoError(b, err)
 	contractAbi := &generated.AutonityTestAbi
 	deployer := common.Address{}
-	contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm)
+	committeeSize := 100
+	contractAddress, err := deployContract(contractAbi, generated.AutonityTestBytecode, deployer, validators, evm, committeeSize)
 	require.NoError(b, err)
-	// b.Log(contractAddress)
 	var header *types.Header
-	packedArgs, err := contractAbi.Pack("applyStakingOperations")
+	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations")
 	require.NoError(b, err)
-	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "applyStakingOperations", packedArgs)
+	err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "testArrayDelete", validators[0].NodeAddress)
 	require.NoError(b, err)
-	packedArgs, err = contractAbi.Pack("computeCommitteeWithCommitteeStruct")
-	require.NoError(b, err)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		err = callContractFunction(evmContract, contractAddress, stateDb, header, contractAbi, "computeCommitteeWithCommitteeStruct", packedArgs)
-		require.NoError(b, err)
-	}
 }
 
 func TestElectProposer(t *testing.T) {
@@ -388,4 +602,20 @@ func testEVMProvider() func(header *types.Header, origin common.Address, statedb
 		evm := vm.NewEVM(vmBlockContext, txContext, statedb, params.TestChainConfig, vm.Config{})
 		return evm
 	}
+}
+
+func benchmarkWithGas(
+	b *testing.B, evmContract *EVMContract, stateDb *state.StateDB, header *types.Header,
+	contractAddress common.Address, packedArgs []byte,
+) {
+	gas := uint64(math.MaxUint64)
+	var gasUsed uint64
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, gasLeft, err := evmContract.CallContractFunc(stateDb, header, contractAddress, packedArgs)
+		require.NoError(b, err)
+		gasUsed += gas - gasLeft
+	}
+	b.Log(1.0 * gasUsed / uint64(b.N))
 }
