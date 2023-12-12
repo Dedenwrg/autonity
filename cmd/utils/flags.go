@@ -597,7 +597,7 @@ var (
 	ConsensusListenPortFlag = cli.IntFlag{
 		Name:  "consensus.port",
 		Usage: "Network listening port for consensus channel",
-		Value: 30304,
+		Value: node.DefaultATCPortInt,
 	}
 	ConsensusNATFlag = cli.StringFlag{
 		Name:  "consensus.nat",
@@ -622,7 +622,7 @@ var (
 	ListenPortFlag = cli.IntFlag{
 		Name:  "port",
 		Usage: "Network listening port",
-		Value: 30303,
+		Value: node.DefaultETHPortInt,
 	}
 	NATFlag = cli.StringFlag{
 		Name:  "nat",

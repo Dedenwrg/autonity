@@ -543,7 +543,7 @@ func (srv *Server) Start() (err error) {
 	srv.checkpointPostHandshake = make(chan *conn)
 	srv.checkpointAddPeer = make(chan *conn)
 	srv.addtrusted = make(chan *enode.Node)
-	srv.ConsensusInfo = make(chan *ConsensusInfo, 1)
+	//	srv.ConsensusInfo = make(chan *ConsensusInfo, 1)
 	srv.removetrusted = make(chan *enode.Node)
 	srv.peerOp = make(chan peerOpFunc)
 	srv.peerOpDone = make(chan struct{})
@@ -573,9 +573,9 @@ func (srv *Server) setupLocalNode() error {
 	for _, p := range srv.Protocols {
 		srv.ourHandshake.Caps = append(srv.ourHandshake.Caps, p.cap())
 	}
-	if srv.Typ == EthTx {
-		srv.ourHandshake.ConsensusInfo = *srv.RetrieveConsensusInfo()
-	}
+	//if srv.Typ == EthTx {
+	//	srv.ourHandshake.ConsensusInfo = *srv.RetrieveConsensusInfo()
+	//}
 	sort.Sort(capsByNameAndVersion(srv.ourHandshake.Caps))
 
 	//TODO: (Review)We are creating a memoryDB for consensus server
@@ -595,16 +595,16 @@ func (srv *Server) setupLocalNode() error {
 		}
 	}
 
-	ipstring := "127.0.0.1"
+	//ipstring := "127.0.0.1"
 	switch srv.NAT.(type) {
 	case nil:
 		// No NAT interface, do nothing.
-		srv.ShareConsensusInfo(ipstring)
+		//srv.ShareConsensusInfo(ipstring)
 	case nat.ExtIP:
 		// ExtIP doesn't block, set the IP right away.
 		ip, _ := srv.NAT.ExternalIP()
 		srv.localnode.SetStaticIP(ip)
-		srv.ShareConsensusInfo(ip.String())
+		//srv.ShareConsensusInfo(ip.String())
 	default:
 		// Ask the router about the IP. This takes a while and blocks startup,
 		// do it in the background.
@@ -613,7 +613,7 @@ func (srv *Server) setupLocalNode() error {
 			defer srv.loopWG.Done()
 			if ip, err := srv.NAT.ExternalIP(); err == nil {
 				srv.localnode.SetStaticIP(ip)
-				srv.ShareConsensusInfo(ip.String())
+				//srv.ShareConsensusInfo(ip.String())
 			}
 		}()
 	}
@@ -759,6 +759,7 @@ func (srv *Server) setupListening() error {
 		if !tcp.IP.IsLoopback() && srv.NAT != nil {
 			srv.loopWG.Add(1)
 			go func() {
+				//TODO: though name is not used in pmp, we can form the name based on server type
 				nat.Map(srv.NAT, srv.quit, "tcp", tcp.Port, tcp.Port, "ethereum p2p")
 				srv.loopWG.Done()
 			}()
@@ -1089,14 +1090,15 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		return DiscUnexpectedIdentity
 	}
 	c.caps, c.name = phs.Caps, phs.Name
+	//if srv.Typ == EthTx && phs.ConsensusInfo.IP != "" {
+	// srv.RemoveTrustedPeer(c.node.ID())
+	// srv.NewConsensusPeer(remotePubkey, &phs.ConsensusInfo)
+	//}
 	// This actually runs the conn and returns when the conn shuts down
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
 	if err != nil {
 		clog.Trace("Rejected peer", "err", err)
 		return err
-	}
-	if srv.Typ == EthTx && phs.ConsensusInfo.IP != "" {
-		srv.NewConsensusPeer(remotePubkey, &phs.ConsensusInfo)
 	}
 
 	return nil
