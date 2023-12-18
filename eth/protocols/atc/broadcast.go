@@ -1,5 +1,5 @@
 // TODO: Copyrights template here
-package tm
+package atc
 
 import (
 	"math/big"

@@ -18,7 +18,7 @@ package eth
 
 import (
 	autonity "github.com/autonity/autonity"
-	"github.com/autonity/autonity/eth/protocols/tm"
+	"github.com/autonity/autonity/eth/protocols/atc"
 	"sync"
 
 	"github.com/autonity/autonity/common"
@@ -42,7 +42,7 @@ func newConsensusPeerSet() *consensusPeerSet {
 
 // registerPeer injects a new `eth` peer into the working set, or returns an error
 // if the peer is already known.
-func (ps *consensusPeerSet) registerPeer(peer *tm.Peer) error {
+func (ps *consensusPeerSet) registerPeer(peer *atc.Peer) error {
 	// Start tracking the new peer
 	ps.lock.Lock()
 	defer ps.lock.Unlock()

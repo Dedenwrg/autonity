@@ -19,7 +19,7 @@ package eth
 import (
 	"crypto/ecdsa"
 	"errors"
-	"github.com/autonity/autonity/eth/protocols/tm"
+	"github.com/autonity/autonity/eth/protocols/atc"
 	"math"
 	"math/big"
 	"sync"
@@ -614,7 +614,7 @@ func (h *handler) FindConsensusPeers(targets map[common.Address]struct{}) map[co
 
 // runConsensusPeer registers a `consensus` peer into the consensus peerset and
 // starts handling inbound messages.
-func (h *handler) runConsensusPeer(peer *tm.Peer, handler tm.Handler) error {
+func (h *handler) runConsensusPeer(peer *atc.Peer, handler atc.Handler) error {
 	h.peerWG.Add(1)
 	defer h.peerWG.Done()
 

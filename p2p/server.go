@@ -25,8 +25,6 @@ import (
 	"fmt"
 	"net"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,7 +53,7 @@ func (ser ServerTyp) String() string {
 	case Consensus:
 		return "Consensus"
 	case EthTx:
-		return "EthTx"
+		return "ethereum"
 	}
 	return "Invalid"
 }
@@ -197,11 +195,6 @@ type Server struct {
 	newTransport func(net.Conn, *ecdsa.PublicKey) transport
 	newPeerHook  func(*Peer)
 	listenFunc   func(network, addr string) (net.Listener, error)
-
-	// These members are used to push data from consensus server object to eth server object
-	NewConsensusPeer      func(pubkey *ecdsa.PublicKey, info *ConsensusInfo)
-	RetrieveConsensusInfo func() *ConsensusInfo
-	ConsensusInfo         chan *ConsensusInfo
 
 	lock    sync.Mutex // protects running
 	running bool
@@ -411,9 +404,9 @@ func (srv *Server) RemoveTrustedPeer(node *enode.Node) {
 // UpdateConsensusEnodes is responsible to make sure that
 // a node belonging to the consensus committee is fully connected
 // to the other consensus committee nodes.
-func (src *Server) UpdateConsensusEnodes(enodes []*enode.Node) {
+func (srv *Server) UpdateConsensusEnodes(enodes []*enode.Node) {
 	// Check for peers that needs to be disconnected
-	for _, connectedPeer := range src.consensusNodes {
+	for _, connectedPeer := range srv.consensusNodes {
 		found := false
 		for _, whitelistedEnode := range enodes {
 			if connectedPeer.ID() == whitelistedEnode.ID() {
@@ -422,16 +415,16 @@ func (src *Server) UpdateConsensusEnodes(enodes []*enode.Node) {
 			}
 		}
 		if !found {
-			log.Debug("Dropping node from static peers", "enode", connectedPeer.String())
-			src.RemoveTrustedPeer(connectedPeer)
-			src.dialsched.removeStatic(connectedPeer)
+			log.Debug("Dropping node from static peers", "enode", connectedPeer.String(), "server", srv.Typ.String())
+			srv.RemoveTrustedPeer(connectedPeer)
+			srv.dialsched.removeStatic(connectedPeer)
 		}
 	}
 
 	// Check for peers that needs to be connected
 	for _, whitelistedEnode := range enodes {
 		found := false
-		for _, oldEnode := range src.consensusNodes {
+		for _, oldEnode := range srv.consensusNodes {
 			if oldEnode.ID() == whitelistedEnode.ID() {
 				found = true
 				break
@@ -439,12 +432,12 @@ func (src *Server) UpdateConsensusEnodes(enodes []*enode.Node) {
 		}
 		if !found {
 			log.Debug("Connecting to validator", "enode", whitelistedEnode.String())
-			src.AddTrustedPeer(whitelistedEnode)
-			src.AddPeer(whitelistedEnode)
+			srv.AddTrustedPeer(whitelistedEnode)
+			srv.AddPeer(whitelistedEnode)
 		}
 	}
 
-	src.consensusNodes = enodes
+	srv.consensusNodes = enodes
 }
 
 // SubscribePeers subscribes the given channel to peer events
@@ -573,9 +566,7 @@ func (srv *Server) setupLocalNode() error {
 	for _, p := range srv.Protocols {
 		srv.ourHandshake.Caps = append(srv.ourHandshake.Caps, p.cap())
 	}
-	//if srv.Typ == EthTx {
-	//	srv.ourHandshake.ConsensusInfo = *srv.RetrieveConsensusInfo()
-	//}
+
 	sort.Sort(capsByNameAndVersion(srv.ourHandshake.Caps))
 
 	//TODO: (Review)We are creating a memoryDB for consensus server
@@ -588,23 +579,19 @@ func (srv *Server) setupLocalNode() error {
 	srv.nodedb = db
 	srv.localnode = enode.NewLocalNode(db, srv.PrivateKey, srv.log)
 	srv.localnode.SetFallbackIP(net.IP{127, 0, 0, 1})
-	// TODO: check conflicts
 	for _, p := range srv.Protocols {
 		for _, e := range p.Attributes {
 			srv.localnode.Set(e)
 		}
 	}
 
-	//ipstring := "127.0.0.1"
 	switch srv.NAT.(type) {
 	case nil:
 		// No NAT interface, do nothing.
-		//srv.ShareConsensusInfo(ipstring)
 	case nat.ExtIP:
 		// ExtIP doesn't block, set the IP right away.
 		ip, _ := srv.NAT.ExternalIP()
 		srv.localnode.SetStaticIP(ip)
-		//srv.ShareConsensusInfo(ip.String())
 	default:
 		// Ask the router about the IP. This takes a while and blocks startup,
 		// do it in the background.
@@ -613,7 +600,6 @@ func (srv *Server) setupLocalNode() error {
 			defer srv.loopWG.Done()
 			if ip, err := srv.NAT.ExternalIP(); err == nil {
 				srv.localnode.SetStaticIP(ip)
-				//srv.ShareConsensusInfo(ip.String())
 			}
 		}()
 	}
@@ -759,8 +745,7 @@ func (srv *Server) setupListening() error {
 		if !tcp.IP.IsLoopback() && srv.NAT != nil {
 			srv.loopWG.Add(1)
 			go func() {
-				//TODO: though name is not used in pmp, we can form the name based on server type
-				nat.Map(srv.NAT, srv.quit, "tcp", tcp.Port, tcp.Port, "ethereum p2p")
+				nat.Map(srv.NAT, srv.quit, "tcp", tcp.Port, tcp.Port, srv.Typ.String()+" p2p")
 				srv.loopWG.Done()
 			}()
 		}
@@ -782,7 +767,7 @@ func (srv *Server) doPeerOp(fn peerOpFunc) {
 
 // run is the main loop of the server.
 func (srv *Server) run() {
-	srv.log.Info("Started P2P networking", "self", srv.localnode.Node().URLv4())
+	srv.log.Info("Started P2P networking", "self", srv.localnode.Node().URLv4(), "server", srv.Typ.String())
 	defer srv.loopWG.Done()
 	defer srv.nodedb.Close()
 	defer srv.discmix.Close()
@@ -808,7 +793,7 @@ running:
 		case n := <-srv.addtrusted:
 			// This channel is used by AddTrustedPeer to add a node
 			// to the trusted node set.
-			srv.log.Trace("Adding trusted node", "node", n)
+			srv.log.Trace("Adding trusted node", "node", n, "server", srv.Typ.String())
 			srv.trusted.Store(n.ID(), n)
 			if p, ok := peers[n.ID()]; ok {
 				p.rw.set(trustedConn, true)
@@ -817,7 +802,7 @@ running:
 		case n := <-srv.removetrusted:
 			// This channel is used by RemoveTrustedPeer to remove a node
 			// from the trusted node set.
-			srv.log.Trace("Removing trusted node", "node", n)
+			srv.log.Trace("Removing trusted node", "node", n, "server", srv.Typ.String())
 			srv.trusted.Delete(n.ID())
 			if p, ok := peers[n.ID()]; ok {
 				p.rw.set(trustedConn, false)
@@ -846,7 +831,7 @@ running:
 				// The handshakes are done and it passed all checks.
 				p := srv.launchPeer(c)
 				peers[c.node.ID()] = p
-				srv.log.Debug("Adding p2p peer", "peercount", len(peers), "id", p.ID(), "conn", c.flags, "addr", p.RemoteAddr(), "name", p.Name())
+				srv.log.Debug("Adding p2p peer", "peercount", len(peers), "id", p.ID(), "conn", c.flags, "addr", p.RemoteAddr(), "name", p.Name(), "server", srv.Typ.String())
 				srv.dialsched.peerAdded(c)
 				if p.Inbound() {
 					inboundCount++
@@ -858,7 +843,7 @@ running:
 			// A peer disconnected.
 			d := common.PrettyDuration(mclock.Now() - pd.created)
 			delete(peers, pd.ID())
-			srv.log.Debug("Removing p2p peer", "peercount", len(peers), "id", pd.ID(), "duration", d, "req", pd.requested, "err", pd.err)
+			srv.log.Debug("Removing p2p peer", "peercount", len(peers), "id", pd.ID(), "duration", d, "req", pd.requested, "err", pd.err, "server", srv.Typ.String())
 			srv.dialsched.peerRemoved(pd.rw)
 			if pd.Inbound() {
 				inboundCount--
@@ -866,7 +851,7 @@ running:
 		}
 	}
 
-	srv.log.Trace("P2P networking is spinning down")
+	srv.log.Trace("P2P networking is spinning down for ", "server", srv.Typ.String())
 
 	// Terminate discovery. If there is a running lookup it will terminate soon.
 	if srv.ntab != nil {
@@ -954,13 +939,13 @@ func (srv *Server) listenLoop() {
 			fd, err = srv.listener.Accept()
 			if netutil.IsTemporaryError(err) {
 				if time.Since(lastLog) > 1*time.Second {
-					srv.log.Debug("Temporary read error", "err", err)
+					srv.log.Debug("Temporary read error", "err", err, "server", srv.Typ.String())
 					lastLog = time.Now()
 				}
 				time.Sleep(time.Millisecond * 200)
 				continue
 			} else if err != nil {
-				srv.log.Debug("Read error", "err", err)
+				srv.log.Debug("Read error", "err", err, "server", srv.Typ.String())
 				slots <- struct{}{}
 				return
 			}
@@ -969,7 +954,7 @@ func (srv *Server) listenLoop() {
 
 		remoteIP := netutil.AddrIP(fd.RemoteAddr())
 		if err := srv.checkInboundConn(remoteIP); err != nil {
-			srv.log.Debug("Rejected inbound connection", "addr", fd.RemoteAddr(), "err", err)
+			srv.log.Debug("Rejected inbound connection", "addr", fd.RemoteAddr(), "err", err, "server", srv.Typ.String())
 			fd.Close()
 			slots <- struct{}{}
 			continue
@@ -980,7 +965,7 @@ func (srv *Server) listenLoop() {
 				addr = tcp
 			}
 			fd = newMeteredConn(fd, true, addr)
-			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr())
+			srv.log.Trace("Accepted connection", "addr", fd.RemoteAddr(), "server", srv.Typ.String())
 		}
 		go func() {
 			srv.SetupConn(fd, inboundConn, nil)
@@ -1056,7 +1041,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 		dialPubkey := new(ecdsa.PublicKey)
 		if err := dialDest.Load((*enode.Secp256k1)(dialPubkey)); err != nil {
 			err = errors.New("dial destination doesn't have a secp256k1 public key")
-			srv.log.Trace("Setting up connection failed", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)
+			srv.log.Trace("Setting up connection failed", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err, "server", srv.Typ.String())
 			return err
 		}
 	}
@@ -1064,7 +1049,7 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	// Run the RLPx handshake.
 	remotePubkey, err := c.doEncHandshake(srv.PrivateKey)
 	if err != nil {
-		srv.log.Trace("Failed RLPx handshake", "addr", c.fd.RemoteAddr(), "conn", c.flags, "err", err)
+		srv.log.Trace("Failed RLPx handshake", "addr", c.fd.RemoteAddr(), "conn", c.flags, "server", srv.Typ.String(), "err", err)
 		return err
 	}
 	if dialDest != nil {
@@ -1075,47 +1060,29 @@ func (srv *Server) setupConn(c *conn, flags connFlag, dialDest *enode.Node) erro
 	clog := srv.log.New("id", c.node.ID(), "addr", c.fd.RemoteAddr(), "conn", c.flags)
 	err = srv.checkpoint(c, srv.checkpointPostHandshake)
 	if err != nil {
-		clog.Trace("Rejected peer", "err", err)
+		clog.Trace("Rejected peer", "err", err, "server", srv.Typ.String())
 		return err
 	}
 
 	// Run the capability negotiation handshake.
 	phs, err := c.doProtoHandshake(srv.ourHandshake)
 	if err != nil {
-		clog.Trace("Failed p2p handshake", "err", err)
+		clog.Trace("Failed p2p handshake", "err", err, "server", srv.Typ.String())
 		return err
 	}
 	if id := c.node.ID(); !bytes.Equal(crypto.Keccak256(phs.ID), id[:]) {
-		clog.Trace("Wrong devp2p handshake identity", "phsid", hex.EncodeToString(phs.ID))
+		clog.Trace("Wrong devp2p handshake identity", "phsid", hex.EncodeToString(phs.ID), "server", srv.Typ.String())
 		return DiscUnexpectedIdentity
 	}
 	c.caps, c.name = phs.Caps, phs.Name
-	//if srv.Typ == EthTx && phs.ConsensusInfo.IP != "" {
-	// srv.RemoveTrustedPeer(c.node.ID())
-	// srv.NewConsensusPeer(remotePubkey, &phs.ConsensusInfo)
-	//}
 	// This actually runs the conn and returns when the conn shuts down
 	err = srv.checkpoint(c, srv.checkpointAddPeer)
 	if err != nil {
-		clog.Trace("Rejected peer", "err", err)
+		clog.Trace("Rejected peer", "err", err, "server", srv.Typ.String())
 		return err
 	}
 
 	return nil
-}
-
-func (srv *Server) AddConsensusPeer(key *ecdsa.PublicKey, info *ConsensusInfo) {
-	ip := net.ParseIP(info.IP)
-	node := enode.NewV4(key, ip, int(info.Port), int(info.Port))
-	srv.dialsched.addStatic(node)
-}
-
-func (srv *Server) ShareConsensusInfo(ip string) {
-	if srv.Typ == Consensus {
-		tokens := strings.Split(srv.ListenAddr, ":")
-		port, _ := strconv.Atoi(tokens[len(tokens)-1])
-		srv.ConsensusInfo <- &ConsensusInfo{Port: uint64(port), IP: ip}
-	}
 }
 
 func nodeFromConn(pubkey *ecdsa.PublicKey, conn net.Conn) *enode.Node {

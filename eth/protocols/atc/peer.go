@@ -1,4 +1,4 @@
-package tm
+package atc
 
 import (
 	"github.com/autonity/autonity/crypto"
@@ -47,7 +47,8 @@ type Peer struct {
 	head common.Hash // Latest advertised head block hash
 	td   *big.Int    // Latest advertised head block total difficulty
 
-	txpool          TxPool                 // Transaction pool used by the broadcasters for liveness checks
+	txpool TxPool // Transaction pool used by the broadcasters for liveness checks
+	//TODO: review block announcement
 	knownBlocks     *knownCache            // Set of block hashes known to be known by this peer
 	queuedBlocks    chan *blockPropagation // Queue of blocks to broadcast to the peer
 	queuedBlockAnns chan *types.Block      // Queue of blocks to announce to the peer

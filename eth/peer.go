@@ -17,7 +17,7 @@
 package eth
 
 import (
-	"github.com/autonity/autonity/eth/protocols/tm"
+	"github.com/autonity/autonity/eth/protocols/atc"
 	"math/big"
 
 	"github.com/autonity/autonity/eth/protocols/eth"
@@ -76,7 +76,7 @@ type consensusPeerInfo struct {
 
 // snapPeer is a wrapper around snap.Peer to maintain a few extra metadata.
 type consensusPeer struct {
-	*tm.Peer
+	*atc.Peer
 }
 
 // info gathers and returns some `snap` protocol metadata known about a peer.

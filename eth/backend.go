@@ -20,7 +20,7 @@ package eth
 import (
 	"errors"
 	"fmt"
-	"github.com/autonity/autonity/eth/protocols/tm"
+	"github.com/autonity/autonity/eth/protocols/atc"
 	"math"
 	"math/big"
 	"runtime"
@@ -551,7 +551,7 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 // ConsensusProtocols returns all the currently configured
 // network protocols to start.
 func (s *Ethereum) ConsensusProtocols() []p2p.Protocol {
-	protos := tm.MakeProtocols((*tmHandler)(s.handler), s.networkID)
+	protos := atc.MakeProtocols((*tmHandler)(s.handler), s.networkID)
 	return protos
 }
 

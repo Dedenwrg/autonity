@@ -18,18 +18,18 @@ package eth
 
 import (
 	"github.com/autonity/autonity/core"
-	"github.com/autonity/autonity/eth/protocols/tm"
+	"github.com/autonity/autonity/eth/protocols/atc"
 	"github.com/autonity/autonity/p2p/enode"
 )
 
-// tmHandler implements the tm.Backend interface to handle the various network
+// tmHandler implements the atc.Backend interface to handle the various network
 // packets that are sent as replies or broadcasts.
 type tmHandler handler
 
 func (h *tmHandler) Chain() *core.BlockChain { return h.chain }
 
 // RunPeer is invoked when a peer joins on the `snap` protocol.
-func (h *tmHandler) RunPeer(peer *tm.Peer, hand tm.Handler) error {
+func (h *tmHandler) RunPeer(peer *atc.Peer, hand atc.Handler) error {
 	return (*handler)(h).runConsensusPeer(peer, hand)
 }
 
@@ -41,8 +41,8 @@ func (h *tmHandler) PeerInfo(id enode.ID) interface{} {
 
 // Handle is invoked from a peer's message handler when it receives a new remote
 // message that the handler couldn't consume and serve itself.
-func (h *tmHandler) Handle(peer *tm.Peer, packet tm.Packet) error {
+func (h *tmHandler) Handle(peer *atc.Peer, packet atc.Packet) error {
 	//TODO: what to do here, may be remove this
 	return nil
 }
-func (h *tmHandler) TxPool() tm.TxPool { return h.txpool }
+func (h *tmHandler) TxPool() atc.TxPool { return h.txpool }
