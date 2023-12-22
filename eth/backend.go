@@ -20,8 +20,6 @@ package eth
 import (
 	"errors"
 	"fmt"
-	"github.com/autonity/autonity/eth/protocols/atc"
-	"math"
 	"math/big"
 	"runtime"
 	"sync"
@@ -99,8 +97,7 @@ type Ethereum struct {
 	networkID     uint64
 	netRPCService *ethapi.PublicNetAPI
 
-	p2pServer    *p2p.Server
-	consensusP2P *p2p.Server
+	p2pServer *p2p.Server
 
 	lock sync.RWMutex // Protects the variadic fields (e.g. gas price and address)
 
@@ -193,7 +190,6 @@ func New(stack *node.Node, config *Config) (*Ethereum, error) {
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
 		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
 		p2pServer:         stack.Server(),
-		consensusP2P:      stack.ConsensusServer(),
 		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
 	}
 
@@ -307,7 +303,6 @@ func New(stack *node.Node, config *Config) (*Ethereum, error) {
 	// Register the backend on the node
 	stack.RegisterAPIs(eth.APIs())
 	stack.RegisterProtocols(eth.Protocols())
-	stack.RegisterConsensusProtocols(eth.ConsensusProtocols())
 	stack.RegisterLifecycle(eth)
 
 	// Successful startup; push a marker and check previous unclean shutdowns.
@@ -547,14 +542,6 @@ func (s *Ethereum) Protocols() []p2p.Protocol {
 	return protos
 }
 
-// TODO: consens protocol can be separated from ethereum object
-// ConsensusProtocols returns all the currently configured
-// network protocols to start.
-func (s *Ethereum) ConsensusProtocols() []p2p.Protocol {
-	protos := atc.MakeProtocols((*tmHandler)(s.handler), s.networkID)
-	return protos
-}
-
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (s *Ethereum) Start() error {
@@ -562,8 +549,6 @@ func (s *Ethereum) Start() error {
 	go s.newCommitteeWatcher()
 
 	eth.StartENRUpdater(s.blockchain, s.p2pServer.LocalNode())
-	//TODO: verify if we need this, probably for ahndshake we need the forkID
-	eth.StartENRUpdater(s.blockchain, s.consensusP2P.LocalNode())
 	// Start the bloom bits servicing goroutines
 	s.startBloomHandlers(params.BloomBitsBlocks)
 
@@ -578,7 +563,6 @@ func (s *Ethereum) Start() error {
 		}
 		maxPeers -= s.config.LightPeers
 	}
-	s.consensusP2P.MaxPeers = math.MaxInt
 	// Start the networking layer and the light server if requested
 	s.handler.Start(maxPeers)
 	return nil
@@ -591,25 +575,25 @@ func (s *Ethereum) newCommitteeWatcher() {
 	chainHeadCh := make(chan core.ChainHeadEvent)
 	chainHeadSub := s.blockchain.SubscribeChainHeadEvent(chainHeadCh)
 
-	updateConsensusEnodes := func(block *types.Block) {
-		state, err := s.blockchain.StateAt(block.Header().Root)
-		if err != nil {
-			s.log.Error("Could not retrieve state at head block", "err", err)
-			return
-		}
-		enodesList, err := s.blockchain.ProtocolContracts().CommitteeEnodes(block, state)
-		if err != nil {
-			s.log.Error("Could not retrieve consensus whitelist at head block", "err", err)
-			return
-		}
-
-		s.consensusP2P.UpdateConsensusEnodes(enodesList.List)
-	}
-
+	//updateConsensusEnodes := func(block *types.Block) {
+	//	//state, err := s.blockchain.StateAt(block.Header().Root)
+	//	//if err != nil {
+	//	//	s.log.Error("Could not retrieve state at head block", "err", err)
+	//	//	return
+	//	//}
+	//	//enodesList, err := s.blockchain.ProtocolContracts().CommitteeEnodes(block, state)
+	//	//if err != nil {
+	//	//	s.log.Error("Could not retrieve consensus whitelist at head block", "err", err)
+	//	//	return
+	//	//}
+	//
+	//	//s.consensusP2P.UpdateConsensusEnodes(enodesList.List)
+	//}
+	//
 	wasValidating := false
 	currentBlock := s.blockchain.CurrentBlock()
 	if currentBlock.Header().CommitteeMember(s.address) != nil {
-		updateConsensusEnodes(currentBlock)
+		//updateConsensusEnodes(currentBlock)
 		s.miner.Start()
 		s.log.Info("Starting node as validator")
 		wasValidating = true
@@ -625,14 +609,14 @@ func (s *Ethereum) newCommitteeWatcher() {
 				// there is no longer the need to retain the full connections and the
 				// consensus engine enabled.
 				if wasValidating {
-					s.consensusP2P.UpdateConsensusEnodes(nil)
+					//s.consensusP2P.UpdateConsensusEnodes(nil)
 					s.log.Info("Local node no longer detected part of the consensus committee, mining stopped")
 					s.miner.Stop()
 					wasValidating = false
 				}
 				continue
 			}
-			updateConsensusEnodes(ev.Block)
+			//updateConsensusEnodes(ev.Block)
 			// if we were not committee in the past block we need to enable the mining engine.
 			if !wasValidating {
 				s.log.Info("Local node detected part of the consensus committee, mining started")

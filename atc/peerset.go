@@ -14,35 +14,50 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
-package eth
+package atc
 
 import (
+	"errors"
 	autonity "github.com/autonity/autonity"
-	"github.com/autonity/autonity/eth/protocols/atc"
+	"github.com/autonity/autonity/atc/protocol"
 	"sync"
 
 	"github.com/autonity/autonity/common"
 	"github.com/autonity/autonity/p2p"
 )
 
+var (
+	// errPeerSetClosed is returned if a peer is attempted to be added or removed
+	// from the peer set after it has been terminated.
+	errPeerSetClosed = errors.New("peerset closed")
+
+	// errPeerAlreadyRegistered is returned if a peer is attempted to be added
+	// to the peer set, but one with the same id already exists.
+	errPeerAlreadyRegistered = errors.New("peer already registered")
+
+	// errPeerNotRegistered is returned if a peer is attempted to be removed from
+	// a peer set, but no peer with the given id exists.
+	errPeerNotRegistered = errors.New("peer not registered")
+)
+
 // ConsensusPeerSet represents the collection of active peers currently participating in
 // the `eth` protocol, with or without the `snap` extension.
-type consensusPeerSet struct {
-	peers  map[string]*consensusPeer // Peers connected on the `eth` protocol
+type peerSet struct {
+	peers  map[string]*protocol.Peer // Peers connected on the `eth` protocol
 	lock   sync.RWMutex
 	closed bool
 }
 
 // Voters creates a new peer set to track the active participants.
-func newConsensusPeerSet() *consensusPeerSet {
-	return &consensusPeerSet{
-		peers: make(map[string]*consensusPeer),
+func newPeerSet() *peerSet {
+	return &peerSet{
+		peers: make(map[string]*protocol.Peer),
 	}
 }
 
 // registerPeer injects a new `eth` peer into the working set, or returns an error
 // if the peer is already known.
-func (ps *consensusPeerSet) registerPeer(peer *atc.Peer) error {
+func (ps *peerSet) registerPeer(peer *protocol.Peer) error {
 	// Start tracking the new peer
 	ps.lock.Lock()
 	defer ps.lock.Unlock()
@@ -54,13 +69,13 @@ func (ps *consensusPeerSet) registerPeer(peer *atc.Peer) error {
 	if _, ok := ps.peers[id]; ok {
 		return errPeerAlreadyRegistered
 	}
-	ps.peers[id] = &consensusPeer{Peer: peer}
+	ps.peers[id] = peer
 	return nil
 }
 
 // unregisterPeer removes a remote peer from the active set, disabling any further
 // actions to/from that particular entity.
-func (ps *consensusPeerSet) unregisterPeer(id string) error {
+func (ps *peerSet) unregisterPeer(id string) error {
 	ps.lock.Lock()
 	defer ps.lock.Unlock()
 
@@ -73,13 +88,13 @@ func (ps *consensusPeerSet) unregisterPeer(id string) error {
 }
 
 // peer retrieves the registered peer with the given id.
-func (ps *consensusPeerSet) peer(id string) *consensusPeer {
+func (ps *peerSet) peer(id string) *protocol.Peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
 	return ps.peers[id]
 }
-func (ps *consensusPeerSet) findPeers(targets map[common.Address]struct{}) map[common.Address]autonity.Peer {
+func (ps *peerSet) findPeers(targets map[common.Address]struct{}) map[common.Address]autonity.Peer {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 	m := make(map[common.Address]autonity.Peer)
@@ -92,25 +107,10 @@ func (ps *consensusPeerSet) findPeers(targets map[common.Address]struct{}) map[c
 	return m
 }
 
-// peersWithoutBlock retrieves a list of peers that do not have a given block in
-// their set of known hashes, so it might be propagated to them.
-func (ps *consensusPeerSet) peersWithoutBlock(hash common.Hash) []*consensusPeer {
-	ps.lock.RLock()
-	defer ps.lock.RUnlock()
-
-	list := make([]*consensusPeer, 0, len(ps.peers))
-	for _, p := range ps.peers {
-		if !p.KnownBlock(hash) {
-			list = append(list, p)
-		}
-	}
-	return list
-}
-
 // len returns if the current number of `eth` peers in the set. Since the `snap`
 // peers are tied to the existence of an `eth` connection, that will always be a
 // subset of `eth`.
-func (ps *consensusPeerSet) len() int {
+func (ps *peerSet) len() int {
 	ps.lock.RLock()
 	defer ps.lock.RUnlock()
 
@@ -118,7 +118,7 @@ func (ps *consensusPeerSet) len() int {
 }
 
 // close disconnects all peers.
-func (ps *consensusPeerSet) close() {
+func (ps *peerSet) close() {
 	ps.lock.Lock()
 	defer ps.lock.Unlock()
 

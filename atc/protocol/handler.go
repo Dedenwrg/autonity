@@ -1,11 +1,10 @@
-package atc
+package protocol
 
 import (
 	"fmt"
 	"github.com/autonity/autonity/common"
 	"github.com/autonity/autonity/consensus"
 	"github.com/autonity/autonity/core"
-	"github.com/autonity/autonity/core/types"
 	"github.com/autonity/autonity/metrics"
 	"github.com/autonity/autonity/p2p"
 	"github.com/autonity/autonity/p2p/enode"
@@ -15,39 +14,24 @@ import (
 	"time"
 )
 
-// Handler is a callback to invoke from an outside runner after the boilerplate
+// HandlerFunc is a callback to invoke from an outside runner after the boilerplate
 // exchanges have passed.
-type Handler func(peer *Peer) error
+type HandlerFunc func(peer *Peer) error
 
-// TODO: update the comments
 // Backend defines the data retrieval methods to serve remote requests and the
 // callback methods to invoke on remote deliveries.
 type Backend interface {
 	// Chain retrieves the blockchain object to serve data.
 	Chain() *core.BlockChain
 
-	// TxPool retrieves the transaction pool object to serve data.
-	TxPool() TxPool
-
-	// RunPeer is invoked when a peer joins on the `consensus` protocol. The handler
+	// RunPeer is invoked when a peer joins on the `consensus` protocol. The ATC
 	// should do any peer maintenance work, handshakes and validations. If all
-	// is passed, control should be given back to the `handler` to process the
+	// is passed, control should be given back to the `ATC` to process the
 	// inbound messages going forward.
-	RunPeer(peer *Peer, handler Handler) error
+	RunPeer(peer *Peer, handler HandlerFunc) error
 
 	// PeerInfo retrieves all known `consensus` information about a peer.
 	PeerInfo(id enode.ID) interface{}
-
-	// Handle is a callback to be invoked when a data packet is received from
-	// the remote peer. Only packets not consumed by the protocol handler will
-	// be forwarded to the backend.
-	Handle(peer *Peer, packet Packet) error
-}
-
-// TxPool defines the methods needed by the protocol handler to serve transactions.
-type TxPool interface {
-	// Get retrieves the transaction from the local txpool with the given hash.
-	Get(hash common.Hash) *types.Transaction
 }
 
 // NodeInfo represents a short summary of the `eth` sub-protocol metadata
@@ -82,7 +66,7 @@ func MakeProtocols(backend Backend, network uint64) []p2p.Protocol {
 			Version: version,
 			Length:  protocolLengths[version],
 			Run: func(p *p2p.Peer, rw p2p.MsgReadWriter) error {
-				peer := NewPeer(version, p, rw, backend.TxPool())
+				peer := NewPeer(version, p, rw)
 				defer peer.Close()
 
 				return backend.RunPeer(peer, func(peer *Peer) error {
@@ -135,7 +119,7 @@ func handleMessage(backend Backend, peer *Peer, errCh chan<- error) error {
 	}
 	defer msg.Discard()
 
-	// Track the amount of time it takes to serve the request and run the handler
+	// Track the amount of time it takes to serve the request and run the ATC
 	if metrics.Enabled {
 		h := fmt.Sprintf("%s/%s/%d/%#02x", p2p.HandleHistName, ProtocolName, peer.Version(), msg.Code)
 		defer func(start time.Time) {
@@ -152,15 +136,5 @@ func handleMessage(backend Backend, peer *Peer, errCh chan<- error) error {
 			return err
 		}
 	}
-	/*
-		//TODO: verify if this to be done in consensus handler or not
-		var handlers = eth66
-		//if peer.Version() >= ETH67 { // Left in as a sample when new protocol is added
-		//	handlers = eth67
-		//}
-		if handler := handlers[msg.Code]; handler != nil {
-			return handler(backend, msg, peer)
-		}
-	*/
 	return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
 }

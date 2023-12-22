@@ -1,5 +1,5 @@
 // TODO: Copyrights template here
-package atc
+package protocol
 
 import (
 	"math/big"
@@ -25,6 +25,7 @@ type blockPropagation struct {
 // to the remote peer. The goal is to have an async writer that does not lock up
 // node internals and at the same time rate limits queued data.
 func (p *Peer) broadcastBlocks() {
+
 	for {
 		select {
 		case prop := <-p.queuedBlocks:

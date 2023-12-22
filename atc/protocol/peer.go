@@ -1,4 +1,4 @@
-package atc
+package protocol
 
 import (
 	"github.com/autonity/autonity/crypto"
@@ -47,8 +47,7 @@ type Peer struct {
 	head common.Hash // Latest advertised head block hash
 	td   *big.Int    // Latest advertised head block total difficulty
 
-	txpool TxPool // Transaction pool used by the broadcasters for liveness checks
-	//TODO: review block announcement
+	//TODO: review block announcement - probably not needed (think)
 	knownBlocks     *knownCache            // Set of block hashes known to be known by this peer
 	queuedBlocks    chan *blockPropagation // Queue of blocks to broadcast to the peer
 	queuedBlockAnns chan *types.Block      // Queue of blocks to announce to the peer
@@ -57,10 +56,9 @@ type Peer struct {
 	lock sync.RWMutex  // Mutex protecting the internal fields
 }
 
-// TODO: check if TXPool is really required
 // NewPeer create a wrapper for a network connection and negotiated  protocol
 // version.
-func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Peer {
+func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter) *Peer {
 	peer := &Peer{
 		id:              p.ID().String(),
 		address:         crypto.PubkeyToAddress(*p.Node().Pubkey()),
@@ -70,11 +68,11 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Pe
 		knownBlocks:     newKnownCache(maxKnownBlocks),
 		queuedBlocks:    make(chan *blockPropagation, maxQueuedBlocks),
 		queuedBlockAnns: make(chan *types.Block, maxQueuedBlockAnns),
-		txpool:          txpool,
 		term:            make(chan struct{}),
 	}
 	// Start up all the broadcasters
-	go peer.broadcastBlocks()
+	// no block broadcasting for consensus Peers
+	//go peer.broadcastBlocks()
 	return peer
 }
 

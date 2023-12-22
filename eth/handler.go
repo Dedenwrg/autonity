@@ -19,7 +19,6 @@ package eth
 import (
 	"crypto/ecdsa"
 	"errors"
-	"github.com/autonity/autonity/eth/protocols/atc"
 	"math"
 	"math/big"
 	"sync"
@@ -106,11 +105,10 @@ type handler struct {
 	chain    *core.BlockChain
 	maxPeers int
 
-	downloader     *downloader.Downloader
-	blockFetcher   *fetcher.BlockFetcher
-	txFetcher      *fetcher.TxFetcher
-	peers          *ethPeerSet
-	consensusPeers *consensusPeerSet
+	downloader   *downloader.Downloader
+	blockFetcher *fetcher.BlockFetcher
+	txFetcher    *fetcher.TxFetcher
+	peers        *ethPeerSet
 
 	eventMux      *event.TypeMux
 	txsCh         chan core.NewTxsEvent
@@ -143,7 +141,6 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		txpool:         config.TxPool,
 		chain:          config.Chain,
 		peers:          newEthPeerSet(),
-		consensusPeers: newConsensusPeerSet(),
 		requiredBlocks: config.RequiredBlocks,
 		quitSync:       make(chan struct{}),
 	}
@@ -491,7 +488,6 @@ func (h *handler) Stop() {
 	// sessions which are already established but not added to h.peers yet
 	// will exit when they try to register.
 	h.peers.close()
-	h.consensusPeers.close()
 	h.peerWG.Wait()
 
 	log.Info("Ethereum protocol stopped")
@@ -606,38 +602,4 @@ func (h *handler) txBroadcastLoop() {
 
 func (h *handler) FindPeers(targets map[common.Address]struct{}) map[common.Address]autonity.Peer {
 	return h.peers.findPeers(targets)
-}
-
-func (h *handler) FindConsensusPeers(targets map[common.Address]struct{}) map[common.Address]autonity.Peer {
-	return h.consensusPeers.findPeers(targets)
-}
-
-// runConsensusPeer registers a `consensus` peer into the consensus peerset and
-// starts handling inbound messages.
-func (h *handler) runConsensusPeer(peer *atc.Peer, handler atc.Handler) error {
-	h.peerWG.Add(1)
-	defer h.peerWG.Done()
-
-	// Execute the Ethereum handshake
-	var (
-		genesis = h.chain.Genesis()
-		head    = h.chain.CurrentHeader()
-		hash    = head.Hash()
-		number  = head.Number.Uint64()
-		td      = h.chain.GetTd(hash, number)
-	)
-	forkID := forkid.NewID(h.chain.Config(), h.chain.Genesis().Hash(), h.chain.CurrentHeader().Number.Uint64())
-	if err := peer.Handshake(h.networkID, td, hash, genesis.Hash(), forkID, h.forkFilter); err != nil {
-		peer.Log().Debug("Consensus handshake failed", "err", err)
-		return err
-	}
-
-	if err := h.consensusPeers.registerPeer(peer); err != nil {
-		peer.Log().Error("Snapshot extension registration failed", "err", err)
-		return err
-	}
-	//TODO: checkpoint hash and required blocks check not done on consensus channel
-	// Do we need it here
-	defer h.consensusPeers.unregisterPeer(peer.ID())
-	return handler(peer)
 }

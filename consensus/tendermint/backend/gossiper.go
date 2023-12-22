@@ -63,7 +63,7 @@ func (g *Gossiper) Gossip(committee types.Committee, message message.Msg) {
 		}
 	}
 	if g.broadcaster != nil && len(targets) > 0 {
-		ps := g.broadcaster.FindConsensusPeers(targets)
+		ps := g.broadcaster.FindPeers(targets)
 		for addr, p := range ps {
 			ms, ok := g.recentMessages.Get(addr)
 			var m *lru.ARCCache
@@ -96,7 +96,7 @@ func (g *Gossiper) AskSync(header *types.Header) {
 
 	if g.broadcaster != nil && len(targets) > 0 {
 		for {
-			ps := g.broadcaster.FindConsensusPeers(targets)
+			ps := g.broadcaster.FindPeers(targets)
 			// If we didn't find any peers try again in 10ms or exit if we have
 			// been stopped.
 			if len(ps) == 0 {

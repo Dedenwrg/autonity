@@ -353,7 +353,7 @@ func (sb *Backend) SyncPeer(address common.Address) {
 	}
 	sb.logger.Debug("Syncing", "peer", address)
 	targets := map[common.Address]struct{}{address: {}}
-	ps := sb.Broadcaster.FindConsensusPeers(targets)
+	ps := sb.Broadcaster.FindPeers(targets)
 	p, connected := ps[address]
 	if !connected {
 		return
