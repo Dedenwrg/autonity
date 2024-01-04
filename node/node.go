@@ -271,7 +271,6 @@ func (n *Node) openEndpoints() error {
 	if err := n.atcServer.Start(); err != nil {
 		return convertFileLockError(err)
 	}
-	// server depends on consensus server
 	if err := n.server.Start(); err != nil {
 		return convertFileLockError(err)
 	}

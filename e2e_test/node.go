@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/autonity/autonity/atc"
 	"github.com/autonity/autonity/consensus/tendermint/core/interfaces"
 	"io/ioutil"
 	"math/big"
@@ -81,6 +82,7 @@ type Node struct {
 	isRunning bool
 	Config    *node.Config
 	Eth       *eth.Ethereum
+	Atc       *atc.ATC
 	EthConfig *ethconfig.Config
 	WsClient  *ethclient.Client
 	Nonce     uint64
@@ -220,6 +222,7 @@ func (n *Node) Start() error {
 	if n.Eth, err = eth.New(n.Node, ethConfigCopy); err != nil {
 		return fmt.Errorf("cannot create new eth: %w", err)
 	}
+	atc.New(n.Node, n.Eth.BlockChain(), ethconfig.Defaults.NetworkID)
 	if _, _, err = core.SetupGenesisBlock(n.Eth.ChainDb(), n.EthConfig.Genesis); err != nil {
 		return fmt.Errorf("cannot setup genesis block: %w", err)
 	}

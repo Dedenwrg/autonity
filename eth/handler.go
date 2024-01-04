@@ -213,7 +213,7 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	h.blockFetcher = fetcher.NewBlockFetcher(false, nil, h.chain.GetBlockByHash, validator, h.BroadcastBlock, heighter, nil, inserter, h.removePeer)
 
 	if handler, ok := h.chain.Engine().(consensus.Handler); ok {
-		handler.SetBroadcaster(h)
+		handler.SetEnqueuer(h)
 	}
 
 	fetchTx := func(peer string, hashes []common.Hash) error {

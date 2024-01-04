@@ -30,7 +30,8 @@ func (atc *ATC) watchCommittee(ctx context.Context) {
 	currentBlock := atc.chain.CurrentBlock()
 	if currentBlock.Header().CommitteeMember(atc.address) != nil {
 		updateConsensusEnodes(currentBlock)
-		//s.miner.Start()
+		//TODO: where does miner start go?
+		//atc.miner.Start()
 		//s.log.Info("Starting node as validator")
 		wasValidating = true
 	}

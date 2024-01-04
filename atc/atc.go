@@ -21,6 +21,7 @@ import (
 	autonity "github.com/autonity/autonity"
 	"github.com/autonity/autonity/atc/protocol"
 	"github.com/autonity/autonity/common"
+	"github.com/autonity/autonity/consensus"
 	"github.com/autonity/autonity/core"
 	"github.com/autonity/autonity/core/forkid"
 	"github.com/autonity/autonity/crypto"
@@ -58,6 +59,9 @@ func New(stack *node.Node, chain *core.BlockChain, netID uint64) *ATC {
 	atc.server.MaxPeers = math.MaxInt
 	stack.RegisterConsensusProtocols(atc.ConsensusProtocols())
 	stack.RegisterLifecycle(atc)
+	if handler, ok := chain.Engine().(consensus.Handler); ok {
+		handler.SetBroadcaster(atc)
+	}
 	return atc
 }
 
@@ -129,7 +133,7 @@ func (atc *ATC) RunPeer(peer *protocol.Peer, hand protocol.HandlerFunc) error {
 	return atc.runConsensusPeer(peer, hand)
 }
 
-// PeerInfo retrieves all known `snap` information about a peer.
+// PeerInfo retrieves all known `atc` information about a peer.
 func (atc *ATC) PeerInfo(id enode.ID) interface{} {
 	//TODO
 	return nil
