@@ -3,10 +3,10 @@ name: Build and Upload Ethkey Package
 on:
   push:
     branches:
-      - main
+      - depelov
   pull_request:
     branches:
-      - main
+      - depelov
 
 jobs:
   build:
