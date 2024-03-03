@@ -31,3 +31,4 @@ jobs:
       with:
         name: ethkey-package
         path: build/bin/ethkey
+        archive: false
