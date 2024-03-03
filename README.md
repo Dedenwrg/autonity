@@ -32,7 +32,7 @@ Key features of the Autonity Protocol are:
 - delegated Proof of Stake consensus for committee selection and blockchain management, using the deterministic Tendermint BFT consensus algorithm
 - dual coin tokenomics, with native coins _Auton_ and _Newton_ for utility and staking
 - liquid staking for capital efficiency, staked newton yielding transferrable _Liquid Newton_ redeemed for _Newton_ on unbonding stake
-- epoch-based staking reward distributio
+- epoch-based staking reward distribution
 
 Core technology is the Autonity Go Client (AGC). AGC is the reference implementation of the Autonity Protocol and provides the main client software run by participant peer nodes in an Autonity network system. The client is a fork of [Go Ethereum](https://github.com/ethereum/go-ethereum).
 
