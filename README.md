@@ -26,7 +26,7 @@ Autonity is an EVM-based Layer 1 blockchain protocol for peer-to-peer networks h
 
 Autonity networks are Byzantine fault-tolerant and secured by delegated Proof of Stake using Tendermint consensus. Autonity has native protocol coins and implements a liquid staking model. Native coins are the *Auton*  utility coin used in the transaction fee mechanism and *Newton* for staking the network. *Liquid Newton* is minted and burned as stake is bonded and redeemed.
 
-Key features of the Autonity Protocol are: 
+Key features of the Autonity Protocol ar: 
 
 - immediate and deterministic transaction finality in a public environment where participant nodes can join the network dynamically without permission
 - delegated Proof of Stake consensus for committee selection and blockchain management, using the deterministic Tendermint BFT consensus algorithm
