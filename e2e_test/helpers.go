@@ -2,8 +2,12 @@ package e2e
 
 import (
 	"crypto/rand"
+	"github.com/autonity/autonity/core/types"
 	"github.com/autonity/autonity/params"
+	fuzz "github.com/google/gofuzz"
+	"math/big"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -73,17 +77,17 @@ func AccountabilityEventDetected(t *testing.T, faultyValidator common.Address, e
 	rule autonity.Rule, network Network) bool {
 
 	n := network[1]
-	autonityContract, _ := autonity.NewAccountability(params.AccountabilityContractAddress, n.WsClient)
+	accountabilityContract, _ := autonity.NewAccountability(params.AccountabilityContractAddress, n.WsClient)
 	var events []autonity.AccountabilityEvent
 	if eventType == autonity.Misbehaviour {
-		faults, err := autonityContract.GetValidatorFaults(nil, faultyValidator)
+		faults, err := accountabilityContract.GetValidatorFaults(nil, faultyValidator)
 		require.NoError(t, err)
 		events = append(events, faults...)
 	} else {
-		iter, err := autonityContract.FilterNewAccusation(nil, []common.Address{faultyValidator})
+		iter, err := accountabilityContract.FilterNewAccusation(nil, []common.Address{faultyValidator})
 		require.NoError(t, err)
 		for iter.Next() {
-			event, err := autonityContract.Events(nil, iter.Event.Id)
+			event, err := accountabilityContract.Events(nil, iter.Event.Id)
 			require.NoError(t, err)
 			events = append(events, event)
 		}
@@ -97,4 +101,25 @@ func AccountabilityEventDetected(t *testing.T, faultyValidator common.Address, e
 	}
 	// Go through every block receipt and look for log emitted by the autonity contract
 	return found
+}
+
+func FuzBlock(p *types.Block, height *big.Int) {
+	fakeTransactions := make([]*types.Transaction, 0)
+	f := fuzz.New()
+	for i := 0; i < 5; i++ {
+		var fakeTransaction types.Transaction
+		f.Fuzz(&fakeTransaction)
+		var tx types.LegacyTx
+		f.Fuzz(&tx)
+		fakeTransaction.SetInner(&tx)
+		fakeTransactions = append(fakeTransactions, &fakeTransaction)
+	}
+	p.SetTransactions(fakeTransactions)
+	var hash common.Hash
+	f.Fuzz(&hash)
+	var atmHash atomic.Value
+	atmHash.Store(hash)
+	// nil hash
+	p.SetHash(atmHash)
+	p.SetHeaderNumber(height)
 }
